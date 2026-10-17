@@ -386,6 +386,8 @@ namespace Sill.Band
             return Guard("ShowDW", () =>
             {
                 Log("ShowDW({0})", fShow);
+                // 탐색기는 패널을 닫았다 열 때마다 사이트 스타일을 되돌리므로 보일 때마다 다시 적용한다. 그 전의 배치에는 띠 머리가 있다.
+                if (_view != null && !fShow) _view.CaptionOff = false;
                 if (_view != null && fShow) Safe("탐색기 모양", Restyle);
                 if (_view != null) _view.Visible = fShow;
                 if (_web != null) _web.IsVisible = fShow;
@@ -463,7 +465,8 @@ namespace Sill.Band
             if (_events != null) { Safe("Unadvise", () => _events.Unadvise(_cookie)); _events = null; }
             _browser = null;
             if (_session != null) { _session.Dispose(); _session = null; }
-            if (_web != null) { _web.Close(); _web = null; }
+            // 닫는 동안 band 창이 포커스를 받으면(GotFocus) 닫힌 컨트롤러를 부르지 않도록 먼저 비운다.
+            if (_web != null) { var web = _web; _web = null; web.Close(); }
             if (_bar != IntPtr.Zero) { Native.RemoveWindowSubclass(_bar, BarProc, UIntPtr.Zero); _bar = IntPtr.Zero; }
             if (_view == null) return;
             _view.Dispose();
@@ -477,7 +480,7 @@ namespace Sill.Band
         static readonly uint KeyMessage = Native.RegisterWindowMessage("Sill.Key");
         public event Action<int> Key;
 
-        public bool CaptionOff;             // BSIS_NOCAPTION을 적용한 뒤. 그 전의 첫 배치에는 띠 머리가 있다
+        public bool CaptionOff;             // 이번에 보일 때 BSIS_NOCAPTION을 적용한 뒤. 그 전의 배치에는 띠 머리가 있다
         bool _captionLogged;
 
         protected override void WndProc(ref Message m)

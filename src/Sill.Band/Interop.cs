@@ -93,7 +93,7 @@ namespace Sill.Band
         [PreserveSig] int QueryService(ref Guid guidService, ref Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object ppvObject);
     }
 
-    // 탐색기 창(탭)의 셸 브라우저 (shobjidl_core.h). BrowseObject까지만 순서대로 선언하고 뒤의 메서드는 부르지 않는다.
+    // 탐색기 창(탭)의 셸 브라우저 (shobjidl_core.h). QueryActiveShellView까지만 순서대로 선언하고 뒤의 메서드는 부르지 않는다.
     [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("000214E2-0000-0000-C000-000000000046")]
     public interface IShellBrowser
     {
@@ -108,6 +108,17 @@ namespace Sill.Band
         [PreserveSig] int EnableModelessSB(bool fEnable);
         [PreserveSig] int TranslateAcceleratorSB(ref MSG pmsg, ushort wID);
         [PreserveSig] int BrowseObject(IntPtr pidl, uint wFlags);
+        [PreserveSig] int GetViewStateStream(uint grfMode, out IntPtr ppStrm);
+        [PreserveSig] int GetControlWindow(uint id, out IntPtr phwnd);
+        [PreserveSig] int SendControlMsg(uint id, uint uMsg, IntPtr wParam, IntPtr lParam, out IntPtr pret);
+        [PreserveSig] int QueryActiveShellView([MarshalAs(UnmanagedType.IUnknown)] out object ppshv);
+    }
+
+    // 파일 목록 보기 (shobjidl_core.h). 탐색기의 보기는 IOleWindow로의 QueryInterface를 거절하므로 IShellView로 받는다(M6에서 겪음).
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("000214E3-0000-0000-C000-000000000046")]
+    public interface IShellView
+    {
+        [PreserveSig] int GetWindow(out IntPtr phwnd);
     }
 
     // 탐색기 창(탭)의 이벤트 (exdisp.h). 쓰는 것만 선언한다. 나머지 DISPID는 CLR이 DISP_E_MEMBERNOTFOUND로 돌려준다.
@@ -117,12 +128,29 @@ namespace Sill.Band
         [DispId(252)] void NavigateComplete2([MarshalAs(UnmanagedType.IDispatch)] object pDisp, [In] ref object URL);
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int left, top, right, bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GUITHREADINFO
+    {
+        public int cbSize, flags;
+        public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+        public RECT rcCaret;
+    }
+
     internal static class Native
     {
+        public delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
+        [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hWndParent, EnumProc lpEnumFunc, IntPtr lParam);
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr lpdwProcessId);
+        [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO pgui);
         public const int S_OK = 0, S_FALSE = 1, E_NOTIMPL = unchecked((int)0x80004001), E_FAIL = unchecked((int)0x80004005);
 
         [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
         [DllImport("user32.dll")] public static extern IntPtr GetFocus();
+        [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr hWnd);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint RegisterWindowMessage(string lpString);
         [DllImport("user32.dll")] public static extern bool IsChild(IntPtr hWndParent, IntPtr hWnd);
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr ILCreateFromPathW(string pszPath);
         [DllImport("shell32.dll")] public static extern void ILFree(IntPtr pidl);

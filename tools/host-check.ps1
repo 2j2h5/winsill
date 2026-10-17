@@ -63,8 +63,20 @@ Start-Sleep 1      # 프로필이 프롬프트를 두 번 그리는 경우까지
 $n = Prompts; Send "i$($c.ok)`r"; WaitPrompt $n
 $results['입출력'] = $script:text -match 'sill-ok'
 
+# M6: 셸이 있는데 같은 크기가 오면(새 페이지) ConPTY가 화면을 다시 보낸다. 다시 온 화면에 앞의 출력이 있어야 한다.
+$len = $script:text.Length; Send 'r100,30'
+$results['같은 크기 r → 화면 다시 옴'] = WaitFor { $script:text.IndexOf('sill-ok', $len) -ge 0 } 5
+
 $n = Prompts; Send "c$dirB"; WaitPrompt $n
 $results['대기 중 cd (특수 문자 경로)'] = (Cwd) -eq $dirB.FullName
+
+# M6: PowerShell과 Git Bash는 Sill의 cd를 키 처리기로 받으므로 cd 줄이 화면(출력)과 명령 기록에 없다. cmd는 지금처럼 입력한다.
+if ($Shell -ne 'cmd') {
+    $results['Sill의 cd 줄 없음'] = $script:text -notmatch "cd -LiteralPath|cd -- '"
+    $len = $script:text.Length; Send "i$([char]27)[A"; WaitFor { $false } 1 | Out-Null
+    $results['위 화살표에 Sill의 cd 없음'] = $script:text.Substring($len) -notmatch "LiteralPath|cd -- "
+    $n = Prompts; Send "i$([char]3)"; WaitPrompt $n
+}
 
 $n = Prompts; Send "i$($c.sleep)`r"
 Start-Sleep -Milliseconds 300
@@ -136,6 +148,9 @@ if ($Shell -eq 'gitbash') {
 }
 
 $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($hostProc.Id)" | ForEach-Object { $_.ProcessId })
+# M6: 셸이 끝나면 Windows Terminal 모양의 종료 줄이 오고 sill-host도 끝난다.
+$len = $script:text.Length; Send "iexit`r"
+$results['종료 줄'] = WaitFor { $script:text.IndexOf('[process exited with code 0 (0x00000000)]', $len) -ge 0 } 10
 $pipe.Dispose()
 $exited = $hostProc.WaitForExit(5000)
 Start-Sleep -Milliseconds 500

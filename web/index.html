@@ -13,7 +13,7 @@
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
 <script>
-// 화면과 입력만 맡는다. 메시지는 band를 거쳐 sill-host로 간다: r(크기) i(입력) / o(출력) x(세션 끝남) n(다시 시작). M1 설계 표 2.
+// 화면과 입력만 맡는다. 메시지는 band를 거쳐 sill-host로 간다: r(크기) i(입력) s(설정 파일) / o(출력) x(세션 끝남) n(다시 시작). M1 설계 표 2, M6 설계 표 6.
 const host = window.chrome.webview;
 const term = new Terminal({
   fontFamily: '"Cascadia Mono", Consolas, monospace',
@@ -25,7 +25,12 @@ const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
 term.open(document.getElementById('t'));
 
-const sendSize = () => host.postMessage('r' + term.cols + ',' + term.rows);
+// 같은 크기를 두 번 보내지 않는다. sill-host는 같은 크기를 "화면을 다시 그려 달라"(새 페이지)로 읽는다(M6 설계 3.3절).
+let sentSize = '';
+const sendSize = () => {
+  const r = 'r' + term.cols + ',' + term.rows;
+  if (r !== sentSize) host.postMessage(sentSize = r);
+};
 let ended = false;
 
 term.onData(d => {
@@ -33,6 +38,8 @@ term.onData(d => {
     ended = false;
     term.reset();
     host.postMessage('n');
+    newCommand = true;
+    sentSize = '';    // 새 세션은 크기를 받아야 셸을 시작한다
     sendSize();
     return;
   }
@@ -43,15 +50,57 @@ term.onResize(sendSize);
 host.addEventListener('message', e => {
   const m = e.data;
   if (m[0] === 'o') term.write(m.slice(1));
+  else if (m === 'n') {
+    // band가 새 세션을 시작했다(Ctrl+Shift+`). 새 셸이 크기를 받아야 시작한다.
+    ended = false;
+    term.reset();
+    newCommand = true;
+    sentSize = '';
+    sendSize();
+  }
   else if (m === 'x' && !ended) {
     ended = true;
-    term.write('\r\n\x1b[90m[세션이 끝났습니다. 아무 키나 누르면 다시 시작합니다]\x1b[0m\r\n');
+    // 셸이 끝났으면 sill-host가 종료 줄을 먼저 보냈다(M6 설계 표 8). sill-host가 그냥 끊겼으면 줄 중간일 수 있다.
+    term.write((term.buffer.active.cursorX ? '\r\n' : '') + '\x1b[90mPress any key to restart.\x1b[0m\r\n');
   }
 });
 
+// 프롬프트마다(OSC 133;A) 표식을 남겨 Ctrl+Up/Down이 이전·다음 명령으로 스크롤하게 한다. 출력은 그대로 xterm.js가 처리한다.
+// 셸은 줄을 다시 그릴 때도 133;A를 낼 수 있으므로(긴 입력이 줄바꿈될 때), Enter나 Ctrl+C 뒤의 첫 133;A에만 표식을 남긴다.
+const prompts = [];
+let newCommand = true;
+term.onData(d => { if (d.includes('\r') || d.includes('\x03')) newCommand = true; });
+term.parser.registerOscHandler(133, data => {
+  if (data[0] === 'A' && newCommand) { prompts.push(term.registerMarker(0)); newCommand = false; }
+  return false;
+});
+const scrollToPrompt = up => {
+  const top = term.buffer.active.viewportY;
+  const lines = prompts.filter(p => !p.isDisposed).map(p => p.line);
+  const line = up ? lines.filter(l => l < top).pop() : lines.find(l => l > top);
+  if (line === undefined) up ? term.scrollToTop() : term.scrollToBottom();
+  else term.scrollToLine(line);
+};
+
 // Windows Terminal과 같게: Ctrl+C는 선택이 있으면 복사, 없으면 ^C. Ctrl+V는 브라우저 붙여넣기(xterm.js가 paste 이벤트를 처리).
+// 그 밖에는 VS Code의 기본 키(M6 설계 표 2). Ctrl+`, Ctrl+Shift+`는 상주 프로세스가 먼저 받는다. Shift+PageUp/PageDown은 xterm.js가 스크롤한다.
+const keys = {
+  'Comma': () => host.postMessage('s'),
+  'Home': () => term.scrollToTop(),
+  'End': () => term.scrollToBottom(),
+  'ArrowUp': () => scrollToPrompt(true),
+  'ArrowDown': () => scrollToPrompt(false),
+  'Alt+PageUp': () => term.scrollLines(-1),
+  'Alt+PageDown': () => term.scrollLines(1),
+};
 term.attachCustomKeyEventHandler(e => {
-  if (e.type !== 'keydown' || !e.ctrlKey || e.shiftKey || e.altKey) return true;
+  if (!e.ctrlKey || e.shiftKey) return true;
+  const action = keys[(e.altKey ? 'Alt+' : '') + e.code.replace(/^Key/, '')];
+  if (action) {
+    if (e.type === 'keydown') action();
+    return false;
+  }
+  if (e.type !== 'keydown' || e.altKey) return true;
   if (e.code === 'KeyC' && term.hasSelection()) {
     navigator.clipboard.writeText(term.getSelection());
     term.clearSelection();

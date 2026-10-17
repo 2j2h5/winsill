@@ -6,6 +6,7 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Web.Script.Serialization;
 using Microsoft.Win32.SafeHandles;
 
 namespace Sill.Host
@@ -16,12 +17,26 @@ namespace Sill.Host
     {
         static void Log(string format, params object[] args) { Shared.Log("host.log", format, args); }
 
+        // 셸 통합이 Sill의 cd 경로를 읽는 파일. 키 처리기를 등록한 셸 통합이 만든다(M6 설계 3.4절).
+        static readonly string KeyFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            string.Format(@"Sill\cd-{0}.txt", Process.GetCurrentProcess().Id));
+
         static int Main(string[] args)
         {
+            // keys: 단축키 상주 프로세스, open: 오른쪽 클릭 메뉴(M6 설계 3.1·3.7절). 그 밖에는 band가 준 파이프 이름이다.
+            if (args[0] == "keys") return Keys.Run();
+            if (args[0] == "open") return Keys.Open(args.Length > 1 ? args[1] : "");
             try { Run(args[0], args.Length > 1 ? args[1] : null); }
             catch (Exception e) { Log("예외: {0}", e); }
-            Log("종료");
+            Exit();
             return 0;
+        }
+
+        static void Exit()
+        {
+            try { File.Delete(KeyFile); } catch { }
+            Log("종료");
+            Environment.Exit(0);
         }
 
         // shellArg: 셸 값(host-check용). 없으면 settings.json을 따른다(M4 설계 3.4절).
@@ -29,6 +44,8 @@ namespace Sill.Host
         {
             Log("시작 pipe={0}", pipeName);
             KillChildrenOnExit();
+            File.Delete(KeyFile);
+            Environment.SetEnvironmentVariable("SILL_CD", KeyFile);   // 셸이 물려받는다
             // Asynchronous: 읽기(이 스레드)와 쓰기(출력 스레드)가 같은 핸들에서 서로 막지 않게 한다.
             using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Message, PipeOptions.Asynchronous))
             {
@@ -37,6 +54,8 @@ namespace Sill.Host
                 pipe.EndWaitForConnection(wait);
 
                 Pty pty = null;
+                Shell shell = null;
+                short cols = 0, rows = 0;
                 var sync = new Sync();
                 string m;
                 while ((m = Shared.Read(pipe)) != null)
@@ -44,29 +63,47 @@ namespace Sill.Host
                     if (m.Length == 0) continue;
                     if (m[0] == 'i' && pty != null) { sync.Input(m.Substring(1)); pty.Write(m.Substring(1)); }
                     else if (m[0] == 'c') sync.Folder(m.Substring(1));
+                    else if (m[0] == 's') OpenSettings(pipe, shell);
                     else if (m[0] == 'r')
                     {
                         var size = m.Substring(1).Split(',');
-                        short cols = short.Parse(size[0]), rows = short.Parse(size[1]);
-                        if (pty != null) { pty.Resize(cols, rows); continue; }
+                        short c = short.Parse(size[0]), r = short.Parse(size[1]);
+                        if (pty != null)
+                        {
+                            // 같은 크기는 새 페이지(WebView2 복구)뿐이다. ConPTY는 크기가 바뀌면 화면을 다시 보내므로 한 칸 바꿨다 되돌린다(M6 설계 3.3절).
+                            if (c == cols && r == rows) { Log("다시 그리기"); pty.Resize((short)(c - 1), r); }
+                            pty.Resize(c, r);
+                            cols = c; rows = r;
+                            continue;
+                        }
+                        cols = c; rows = r;
 
                         // 설정 문제는 셸 출력보다 먼저 패널에 한 줄로 알린다. 셸을 띄우지 못하면 끝내고, band가 다시 시작을 안내한다.
                         Action<string> notice = s => { Log("안내: {0}", s); Shared.Write(pipe, "o\x1b[90m[Sill] " + s + "\x1b[0m\r\n"); };
-                        var shell = Shell.Choose(shellArg, notice);
+                        shell = Shell.Choose(shellArg, notice);
                         if (shell == null) { pipe.WaitForPipeDrain(); return; }   // 안내 줄을 band가 읽은 뒤에 닫는다
                         string dir = sync.StartDir;
                         if (shell.Cd != null && shell.Cd(dir) == null) dir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                         try { pty = Pty.Start(shell.CommandLine, cols, rows, dir); }
-                        catch (Win32Exception e) { notice("셸을 시작할 수 없습니다: " + shell.Name + " (" + e.Message + ")"); pipe.WaitForPipeDrain(); return; }
+                        catch (Win32Exception e) { notice("Cannot start the shell: " + shell.Name + " (" + e.Message + ")"); pipe.WaitForPipeDrain(); return; }
                         Log("셸 시작 {0} pid={1} {2}x{3} {4}", shell.Name, pty.Process.Id, cols, rows, dir);
-                        sync.Started(pty, shell.Cd);
+                        sync.Started(pty, shell.Cd, KeyFile);
                         var started = pty;
                         new Thread(() => Pump(started, pipe, sync)) { IsBackground = true }.Start();
                         new Thread(() =>
                         {
                             started.Process.WaitForExit();
-                            Log("셸 끝남 code={0}", started.Process.ExitCode);
-                            Environment.Exit(0);
+                            int code = started.ExitCode;
+                            Log("셸 끝남 code={0}", code);
+                            // Windows Terminal의 종료 줄 모양(M6 설계 표 8). 셸의 마지막 출력이 먼저 가도록 잠깐 기다린다.
+                            Thread.Sleep(100);
+                            try
+                            {
+                                Shared.Write(pipe, string.Format("o\r\n\x1b[90m[process exited with code {0} (0x{0:X8})]\x1b[0m\r\n", code));
+                                pipe.WaitForPipeDrain();
+                            }
+                            catch (Exception e) { Log("종료 줄 실패: {0}", e.Message); }
+                            Exit();
                         }) { IsBackground = true }.Start();
                     }
                 }
@@ -100,6 +137,18 @@ namespace Sill.Host
             catch (Exception e) { Log("출력 중단: {0}", e.Message); }
         }
 
+        // Ctrl+,(M6 설계 3.6절). 파일이 없으면 지금 셸 값으로 만든다. 메모장은 band가 띄운다. 이 프로세스의 자식은 작업 개체와 함께 끝나기 때문이다.
+        static void OpenSettings(PipeStream pipe, Shell shell)
+        {
+            if (!File.Exists(Shell.SettingsPath))
+            {
+                string value = shell == null ? "" : shell.Value;
+                File.WriteAllText(Shell.SettingsPath, "{\"shell\": " + new JavaScriptSerializer().Serialize(value) + "}\r\n");
+                Log("설정 파일 만듦 {0}", value);
+            }
+            Shared.Write(pipe, "s" + Shell.SettingsPath);
+        }
+
         static void KillChildrenOnExit()
         {
             const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
@@ -124,6 +173,9 @@ namespace Sill.Host
         public Process Process;
         FileStream _input;
         IntPtr _hpc;
+        IntPtr _process;
+
+        public int ExitCode { get { uint code; Native.GetExitCodeProcess(_process, out code); return (int)code; } }
 
         public static Pty Start(string commandLine, short cols, short rows, string dir)
         {
@@ -153,8 +205,8 @@ namespace Sill.Host
                         EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero, dir, ref si, out pi))
                     throw new Win32Exception();
                 pty.Process = Process.GetProcessById(pi.dwProcessId);
+                pty._process = pi.hProcess;     // GetProcessById로 얻은 Process의 ExitCode는 예외를 던지므로 이 핸들로 읽는다(M6에서 찾음)
                 Native.CloseHandle(pi.hThread);
-                Native.CloseHandle(pi.hProcess);
             }
             finally
             {
@@ -246,6 +298,8 @@ namespace Sill.Host
             bool bInheritHandles, int dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFOEX lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
         [DllImport("kernel32.dll")]
         public static extern bool CloseHandle(IntPtr hObject);
+        [DllImport("kernel32.dll")]
+        public static extern bool GetExitCodeProcess(IntPtr hProcess, out uint lpExitCode);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
         [DllImport("kernel32.dll", SetLastError = true)]

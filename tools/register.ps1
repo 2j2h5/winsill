@@ -32,4 +32,12 @@ Set-ItemProperty $bar -Name BarSize -Type Binary -Value ([byte[]](0xF0, 0, 0, 0,
 foreach ($cat in '{00021493-0000-0000-C000-000000000046}', '{00021494-0000-0000-C000-000000000046}') {
     Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Discardable\PostSetup\Component Categories\$cat\Enum" -Recurse -ErrorAction SilentlyContinue
 }
+# 단축키 상주 프로세스(로그온 때 시작)와 폴더 빈 곳의 오른쪽 클릭 메뉴(M6 설계 3.1·3.7절)
+$hostExe = (Resolve-Path "$PSScriptRoot\..\bin\sill-host.exe").Path
+Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sill -Value "`"$hostExe`" keys"
+$menu = 'HKCU:\Software\Classes\Directory\Background\shell\Sill'
+New-Item $menu -Force | Out-Null
+Set-ItemProperty $menu -Name MUIVerb -Value 'Open in Sill'
+New-Item "$menu\command" -Value "`"$hostExe`" open `"%V`"" -Force | Out-Null
+Start-Process $hostExe keys
 "registered $clsid -> $dll"

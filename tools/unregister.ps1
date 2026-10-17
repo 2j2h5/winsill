@@ -6,4 +6,8 @@ Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Shell Exten
 foreach ($cat in '{00021493-0000-0000-C000-000000000046}', '{00021494-0000-0000-C000-000000000046}') {
     Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Discardable\PostSetup\Component Categories\$cat\Enum" -Recurse -ErrorAction SilentlyContinue
 }
+Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sill -ErrorAction SilentlyContinue
+Remove-Item 'HKCU:\Software\Classes\Directory\Background\shell\Sill' -Recurse -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process -Filter "Name='sill-host.exe'" | Where-Object { $_.CommandLine -match '\skeys\s*$' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 "unregistered $clsid"

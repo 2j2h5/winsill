@@ -12,10 +12,14 @@ namespace Sill.Host
     sealed class Shell
     {
         public string Name;
+        public string Value;                // settings.json의 shell 값(Ctrl+,로 파일을 만들 때 쓴다)
         public string CommandLine;
         public Func<string, string> Cd;     // cd 한 줄(Enter 포함). 그 셸이 갈 수 없는 경로면 null. 셸 통합이 없으면 Cd 자체가 null
 
+        public static readonly string SettingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Sill\settings.json");
+
         // 프로필 적재 뒤 prompt 함수를 감싼다. -EncodedCommand로 넘기므로 실행 정책에 걸리지 않는다.
+        // Sill의 cd는 키 처리기가 받아 프롬프트를 제자리에 다시 그린다. 등록했다는 표시로 $env:SILL_CD 파일을 만든다(M6 설계 3.4절).
         const string PowerShellIntegration = @"
 $global:__sill_prompt = $function:prompt
 function global:prompt {
@@ -23,44 +27,59 @@ function global:prompt {
   $s = ""$e]133;A$e\""
   if ($p.Provider.Name -eq 'FileSystem') { $s += ""$e]9;9;$($p.ProviderPath)$e\"" }
   $s + (& $global:__sill_prompt) + ""$e]133;B$e\""
-}";
+}
+try {
+  Set-PSReadLineKeyHandler -Chord 'Ctrl+Alt+Shift+F12' -ScriptBlock {
+    Set-Location -LiteralPath ([IO.File]::ReadAllText($env:SILL_CD))
+    [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
+  }
+  [IO.File]::WriteAllText($env:SILL_CD, '')
+} catch { }";
 
         // --rcfile은 로그인 셸 파일을 읽지 않으므로 직접 읽는다(VS Code와 같음). ST 대신 BEL로 끝낸다(설계 표 1).
+        // Sill의 cd 키는 cd만 하는 함수(\e[99~)를 부르고 빈 줄로 Enter한다. bind -x 안에서는 프롬프트가 다시 계산되지 않아서다(M6 설계 표 5).
         const string BashIntegration = @"[ -r /etc/profile ] && . /etc/profile
 if [ -r ~/.bash_profile ]; then . ~/.bash_profile; elif [ -r ~/.bash_login ]; then . ~/.bash_login; elif [ -r ~/.profile ]; then . ~/.profile; fi
 __sill_prompt() { local s=$?; printf '\e]133;A\a\e]9;9;%s\a' ""$(cygpath -w ""$PWD"")""; return $s; }
 PROMPT_COMMAND=""__sill_prompt${PROMPT_COMMAND:+; $PROMPT_COMMAND}""
 PS1=""$PS1""'\[\e]133;B\a\]'
+__sill_cd() { cd -- ""$(cat -- ""$SILL_CD"")""; }
+bind -x '""\e[99~"": __sill_cd'
+bind '""\e[24;8~"": ""\e[99~\C-m""'
+: > ""$SILL_CD""
 ";
 
         // value: sill-host의 두 번째 인수. 없으면 settings.json의 shell. 고른 셸을 띄울 수 없으면 null.
         public static Shell Choose(string value, Action<string> notice)
         {
             if (value == null) value = FromSettings(notice);
-            switch ((value ?? "").ToLowerInvariant())
+            string key = (value ?? "").ToLowerInvariant();
+            if (key == "") key = OnPath("pwsh.exe") != null ? "pwsh" : "powershell";
+            Shell shell;
+            switch (key)
             {
-                case "": return PowerShell(OnPath("pwsh.exe") != null ? "pwsh.exe" : "powershell.exe");
-                case "powershell": return PowerShell("powershell.exe");
-                case "pwsh": return PowerShell("pwsh.exe");
-                case "cmd": return Cmd();
-                case "gitbash": return GitBash(notice);
-                default: return new Shell { Name = value, CommandLine = value };
+                case "powershell": shell = PowerShell("powershell.exe"); break;
+                case "pwsh": shell = PowerShell("pwsh.exe"); break;
+                case "cmd": shell = Cmd(); break;
+                case "gitbash": shell = GitBash(notice); break;
+                default: return new Shell { Name = value, Value = value, CommandLine = value };
             }
+            if (shell != null) shell.Value = key;
+            return shell;
         }
 
         static string FromSettings(Action<string> notice)
         {
-            string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Sill\settings.json");
-            if (!File.Exists(path)) return null;
+            if (!File.Exists(SettingsPath)) return null;
             try
             {
-                var settings = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(path));
+                var settings = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(SettingsPath));
                 object shell;
                 if (settings == null || !settings.TryGetValue("shell", out shell)) return null;
                 if (shell is string) return (string)shell;
-                notice("settings.json: shell은 문자열이어야 합니다. 기본 셸로 시작합니다.");
+                notice("settings.json: \"shell\" must be a string. Starting the default shell.");
             }
-            catch (Exception e) { notice("settings.json을 읽을 수 없습니다(" + e.Message + "). 기본 셸로 시작합니다."); }
+            catch (Exception e) { notice("Cannot read settings.json (" + e.Message + "). Starting the default shell."); }
             return null;
         }
 
@@ -95,7 +114,7 @@ PS1=""$PS1""'\[\e]133;B\a\]'
             string bash = git == null ? null : Path.GetFullPath(Path.Combine(Path.GetDirectoryName(git), @"..\bin\bash.exe"));
             if (bash == null || !File.Exists(bash))
                 bash = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Git\bin\bash.exe");
-            if (!File.Exists(bash)) { notice("Git Bash(bash.exe)를 찾을 수 없습니다."); return null; }
+            if (!File.Exists(bash)) { notice("Cannot find Git Bash (bash.exe)."); return null; }
 
             string rc = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Sill\sill.bash");
             File.WriteAllText(rc, BashIntegration.Replace("\r", ""));    // bash는 CR을 명령의 일부로 읽는다

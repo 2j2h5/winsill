@@ -38,7 +38,9 @@ Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sil
 $menu = 'HKCU:\Software\Classes\Directory\Background\shell\Sill'
 New-Item $menu -Force | Out-Null
 Set-ItemProperty $menu -Name MUIVerb -Value 'Open in Sill'
-Set-ItemProperty $menu -Name Icon -Value "`"$hostExe`",0"    # sill-host.exe에 넣은 assets\sill.ico(M7 설계 3.6절)
+# sill-host.exe에 넣은 assets\sill.ico(M7 설계 3.6절). 번호(,0) 대신 리소스 ID(,-32512)로 가리킨다.
+# Windows 아이콘 캐시는 "경로,번호"로 그림을 기억해서, 개발 중 아이콘을 바꾼 뒤에도 예전 그림이 남았다(M7 결과 3.4절).
+Set-ItemProperty $menu -Name Icon -Value "`"$hostExe`",-32512"
 New-Item "$menu\command" -Value "`"$hostExe`" open `"%V`"" -Force | Out-Null
 Start-Process $hostExe keys
 "registered $clsid -> $dll"

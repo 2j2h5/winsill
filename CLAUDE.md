@@ -42,6 +42,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
   - 탐색기 모양을 바꾸는 실험은 CLSID와 어셈블리 이름이 다른 시험 band를 등록해 새 창에서 한다. 개발자의 창과 Sill에 영향이 없다. 한 번 적재된 어셈블리는 탐색기가 놓지 않으므로 고칠 때마다 어셈블리 이름을 바꾼다. 끝나면 등록을 지운다.
   - ConPTY는 셸이 제목을 정하기 전에 `lpTitle`(없으면 실행 파일 전체 경로)을 OSC 0으로 보내고, 크기를 바꿔도 제목은 다시 보내지 않는다. 그래서 같은 크기 `r`(새 페이지)에는 sill-host가 마지막 제목을 먼저 보낸다. cmd는 실행 중인 명령을 제목에 붙인다(`cmd - ping …`), Git Bash 프롬프트는 `MINGW64:/c` 같은 제목을 낸다.
   - 라이트 모드 시험: `AppsUseLightTheme`을 바꾸고 `WM_SETTINGCHANGE`("ImmersiveColorSet")를 방송하면 열린 패널(WebView2는 레지스트리를 직접 감시)과 탐색기가 바로 바뀐다. 시험이 끝나면 0으로 되돌리고 값을 확인한다(개발자 PC는 다크).
+  - Windows 아이콘 캐시는 메뉴 아이콘을 "경로,번호"로 기억한다. exe 아이콘을 바꿔도 같은 값이면 예전 그림이 남았다(`ie4uinit -show`, `SHChangeNotify(SHCNE_ASSOCCHANGED)` 모두 안 들음). 그래서 메뉴 키는 리소스 ID(`sill-host.exe,-32512`)로 가리킨다. 아이콘을 다시 바꾸면 같은 문제가 난다(M5에서 다룸).
   - 시험 도구: x64 `SendInput`의 `INPUT` 구조체는 유니온이 8바이트 경계에서 시작한다. 잘못 선언하면 글자가 하나도 가지 않는다(M7에서 겪음). 글자는 `VkKeyScan`과 스캔 코드로 `keybd_event`를 쓴다. 시험 중 창의 폴더가 바뀌므로 시험 창은 경로가 아니라 HWND로 다시 찾는다. 시험 스크립트는 BOM 있는 UTF-8로 저장한다(한국어 로그 문자열을 비교하므로).
 
 ## 프로젝트 개요

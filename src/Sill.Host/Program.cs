@@ -18,13 +18,14 @@ namespace Sill.Host
 
         static int Main(string[] args)
         {
-            try { Run(args[0]); }
+            try { Run(args[0], args.Length > 1 ? args[1] : null); }
             catch (Exception e) { Log("예외: {0}", e); }
             Log("종료");
             return 0;
         }
 
-        static void Run(string pipeName)
+        // shellArg: 셸 값(host-check용). 없으면 settings.json을 따른다(M4 설계 3.4절).
+        static void Run(string pipeName, string shellArg)
         {
             Log("시작 pipe={0}", pipeName);
             KillChildrenOnExit();
@@ -49,11 +50,16 @@ namespace Sill.Host
                         short cols = short.Parse(size[0]), rows = short.Parse(size[1]);
                         if (pty != null) { pty.Resize(cols, rows); continue; }
 
-                        string shell = Shell();
-                        pty = Pty.Start(shell + " -NoLogo -NoExit -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(Sync.Integration)),
-                            cols, rows, sync.StartDir);
-                        Log("셸 시작 {0} pid={1} {2}x{3} {4}", shell, pty.Process.Id, cols, rows, sync.StartDir);
-                        sync.Started(pty);
+                        // 설정 문제는 셸 출력보다 먼저 패널에 한 줄로 알린다. 셸을 띄우지 못하면 끝내고, band가 다시 시작을 안내한다.
+                        Action<string> notice = s => { Log("안내: {0}", s); Shared.Write(pipe, "o\x1b[90m[Sill] " + s + "\x1b[0m\r\n"); };
+                        var shell = Shell.Choose(shellArg, notice);
+                        if (shell == null) { pipe.WaitForPipeDrain(); return; }   // 안내 줄을 band가 읽은 뒤에 닫는다
+                        string dir = sync.StartDir;
+                        if (shell.Cd != null && shell.Cd(dir) == null) dir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                        try { pty = Pty.Start(shell.CommandLine, cols, rows, dir); }
+                        catch (Win32Exception e) { notice("셸을 시작할 수 없습니다: " + shell.Name + " (" + e.Message + ")"); pipe.WaitForPipeDrain(); return; }
+                        Log("셸 시작 {0} pid={1} {2}x{3} {4}", shell.Name, pty.Process.Id, cols, rows, dir);
+                        sync.Started(pty, shell.Cd);
                         var started = pty;
                         new Thread(() => Pump(started, pipe, sync)) { IsBackground = true }.Start();
                         new Thread(() =>
@@ -92,16 +98,6 @@ namespace Sill.Host
                 }
             }
             catch (Exception e) { Log("출력 중단: {0}", e.Message); }
-        }
-
-        static string Shell()
-        {
-            foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
-            {
-                try { if (dir.Length > 0 && File.Exists(Path.Combine(dir, "pwsh.exe"))) return "pwsh.exe"; }
-                catch (ArgumentException) { }
-            }
-            return "powershell.exe";
         }
 
         static void KillChildrenOnExit()

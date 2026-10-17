@@ -66,6 +66,8 @@ $results['입출력'] = $script:text -match 'sill-ok'
 # M6: 셸이 있는데 같은 크기가 오면(새 페이지) ConPTY가 화면을 다시 보낸다. 다시 온 화면에 앞의 출력이 있어야 한다.
 $len = $script:text.Length; Send 'r100,30'
 $results['같은 크기 r → 화면 다시 옴'] = WaitFor { $script:text.IndexOf('sill-ok', $len) -ge 0 } 5
+# M7: 탭 제목(OSC 0)은 ConPTY가 다시 보내지 않으므로 sill-host가 마지막 제목을 보낸다.
+$results['같은 크기 r → 제목 다시 옴'] = $script:text.IndexOf("$([char]27)]0;", $len) -ge 0
 
 $n = Prompts; Send "c$dirB"; WaitPrompt $n
 $results['대기 중 cd (특수 문자 경로)'] = (Cwd) -eq $dirB.FullName

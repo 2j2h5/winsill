@@ -43,7 +43,7 @@ $core = "$wv2\lib\net462\Microsoft.Web.WebView2.Core.dll"
     /out:"$out\Sill.Band.dll" /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:"$core" `
     (Get-ChildItem "$root\src\Sill.Band\*.cs").FullName "$root\src\Shared.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
-& $csc /nologo /codepage:65001 /target:winexe /platform:x64 /optimize `
+& $csc /nologo /codepage:65001 /target:winexe /platform:x64 /optimize /win32icon:"$root\assets\sill.ico" `
     /out:"$out\sill-host.exe" /r:System.Web.Extensions.dll `
     (Get-ChildItem "$root\src\Sill.Host\*.cs").FullName "$root\src\Shared.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }

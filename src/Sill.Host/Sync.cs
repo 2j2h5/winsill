@@ -88,9 +88,13 @@ namespace Sill.Host
             }
         }
 
+        // 마지막 창 제목(OSC 0·2). ConPTY는 제목을 바뀔 때만 보내므로, 새 페이지(WebView2 복구)에는 sill-host가 다시 보낸다(M7).
+        public volatile string Title;
+
         void Osc(string s)
         {
-            if (s.StartsWith("9;9;"))
+            if (s.StartsWith("0;") || s.StartsWith("2;")) Title = s.Substring(2);
+            else if (s.StartsWith("9;9;"))
             {
                 string prev = _cwd;
                 _cwd = s.Substring(4).Trim('"');

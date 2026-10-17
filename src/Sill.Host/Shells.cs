@@ -12,6 +12,7 @@ namespace Sill.Host
     sealed class Shell
     {
         public string Name;
+        public string Title;                // 셸의 시작 제목. 패널의 탭 제목이 된다(M7 설계 3.4절)
         public string Value;                // settings.json의 shell 값(Ctrl+,로 파일을 만들 때 쓴다)
         public string CommandLine;
         public Func<string, string> Cd;     // cd 한 줄(Enter 포함). 그 셸이 갈 수 없는 경로면 null. 셸 통합이 없으면 Cd 자체가 null
@@ -62,7 +63,7 @@ bind '""\e[24;8~"": ""\e[99~\C-m""'
                 case "pwsh": shell = PowerShell("pwsh.exe"); break;
                 case "cmd": shell = Cmd(); break;
                 case "gitbash": shell = GitBash(notice); break;
-                default: return new Shell { Name = value, Value = value, CommandLine = value };
+                default: return new Shell { Name = value, Value = value, CommandLine = value, Title = TitleOf(value) };
             }
             if (shell != null) shell.Value = key;
             return shell;
@@ -88,6 +89,7 @@ bind '""\e[24;8~"": ""\e[99~\C-m""'
             return new Shell
             {
                 Name = exe,
+                Title = Path.GetFileNameWithoutExtension(exe),
                 CommandLine = exe + " -NoLogo -NoExit -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(PowerShellIntegration)),
                 // PowerShell은 유니코드 작은따옴표(‘ ’ ‚ ‛)도 작은따옴표로 읽으므로 모두 두 번 쓴다.
                 Cd = p => "cd -LiteralPath '" + Regex.Replace(p, "['‘’‚‛]", "$0$0") + "'\r",
@@ -101,6 +103,7 @@ bind '""\e[24;8~"": ""\e[99~\C-m""'
             return new Shell
             {
                 Name = "cmd",
+                Title = "cmd",
                 CommandLine = @"cmd.exe /k prompt $e]133;A$e\$e]9;9;$P$e\" + (string.IsNullOrEmpty(user) ? "$P$G" : user) + @"$e]133;B$e\",
                 // 대화형 cmd는 따옴표 안에서도 %이름%을 푼다. % 뒤에 ""를 넣으면 이름이 달라져 풀리지 않는다. UNC로는 cd할 수 없다.
                 Cd = p => p.StartsWith(@"\\") ? null : "cd /d \"" + p.Replace("%", "%\"\"") + "\"\r",
@@ -121,9 +124,19 @@ bind '""\e[24;8~"": ""\e[99~\C-m""'
             return new Shell
             {
                 Name = "gitbash " + bash,
+                Title = "bash",
                 CommandLine = "\"" + bash + "\" --rcfile \"" + rc.Replace('\\', '/') + "\" -i",
                 Cd = p => "cd -- '" + p.Replace("'", @"'\''") + "'\r",
             };
+        }
+
+        // 명령줄 첫 낱말(따옴표로 묶였으면 그 안)의 파일 이름. "C:\x\wsl.exe" -d Ubuntu → wsl
+        static string TitleOf(string commandLine)
+        {
+            string s = commandLine.Trim();
+            string first = s.StartsWith("\"") ? s.Substring(1).Split('"')[0] : s.Split(' ')[0];
+            try { return Path.GetFileNameWithoutExtension(first); }
+            catch (ArgumentException) { return first; }
         }
 
         static string OnPath(string exe)

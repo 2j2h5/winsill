@@ -19,11 +19,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
 ```
 
 - 사용자 기능(M6): `Ctrl+``(패널 열기·포커스·닫기)와 `Ctrl+Shift+``(터미널 다시 시작)는 상주 프로세스 `sill-host.exe keys`(HKCU `Run`, 뮤텍스로 하나)가 탐색기 창이 전경일 때만 `RegisterHotKey`로 받는다. 오른쪽 클릭 메뉴는 `sill-host.exe open "%V"`. 둘 다 활성 탭의 band 창(제목 `Sill`)에 `Sill.Key` 창 메시지(wParam 0 토글, 1 다시 시작, 2 포커스)를 보내거나, 패널이 없으면 `ShowBrowserBar`로 연다. 페이지는 `Ctrl+,`(settings.json을 메모장으로), VS Code의 스크롤 키를 처리한다. 사용자에게 보이는 문구는 영어, 로그는 한국어.
-- 로그: `%LOCALAPPDATA%\Sill\band.log`(band 호출, WebView2 키 이벤트, `이동 폴더`, `셸 폴더`, `Sill.Key n 포커스=…`, `WebView2 다시 만들기`), `host.log`(sill-host, `OSC 9;9`, `cd 보냄`/`cd 보냄(키)`/`c 건너뜀(이유)`/`c 보류`, `p 보냄`/`p 건너뜀`, `셸 시작 <셸>`, `셸 끝남 code=`, `안내: …`(설정 문제), `c 건너뜀(셸이 못 감)`, `입력 중 유지(프롬프트 다시 그림)`, `133;A 없는 133;B 무시`, `다시 그리기`, `설정 파일 만듦`), `keys.log`(상주 프로세스, `단축키 등록/해제`, `패널 열기`, `Sill.Key`, `메뉴`). WebView2 데이터 폴더는 `%LOCALAPPDATA%\Sill\WebView2`. 로그에는 날짜가 없으니 시험에서는 줄 수로 표시해 두고 그 뒤를 읽는다.
+- 패널 모양(M7): 탐색기의 왼쪽 띠 머리(×, 세로 제목)는 없애고, 페이지가 Windows Terminal 같은 탭 줄(36 px, 탭 하나, 오른쪽 끝에 패널 닫기 ×)을 그린다. 탭 제목은 프로그램이 보낸 창 제목(OSC 0·2, xterm.js `onTitleChange`), 시작 제목은 sill-host가 `STARTUPINFO.lpTitle`로 준 셸 이름(`powershell`·`pwsh`·`cmd`·`bash`, 그 밖은 명령줄 첫 낱말). 색은 Windows 앱 모드(`AppsUseLightTheme`)를 따른다: 페이지는 `prefers-color-scheme`, band는 레지스트리(바뀌면 페이지가 `t`로 알림). 탐색기 실측 색: 다크 내용 #191919·탭 줄/틀 #202020·분할선 선 #2B2B2B, 라이트 #FFFFFF·#E8E8E8·#F7F7F7. xterm.js `minimumContrastRatio` 4.5. "Open in Sill" 아이콘은 `assets/sill.ico`(개발자의 `sill.svg`를 크기마다 Edge 헤드리스로 그려 한 번 만든 것. 개발자의 16·32 px PNG에는 `>_`가 없었다)를 `sill-host.exe`에 넣고 메뉴 키 `Icon`이 가리킨다.
+- 로그: `%LOCALAPPDATA%\Sill\band.log`(band 호출, WebView2 키 이벤트, `이동 폴더`, `셸 폴더`, `Sill.Key n 포커스=…`, `WebView2 다시 만들기`, `사이트 스타일`, `BaseBar … 서브클래스`, `앱 모드`, `닫기 버튼`, `띠 머리 남음`(BSIS_NOCAPTION이 안 들었을 때)), `host.log`(sill-host, `OSC 9;9`, `cd 보냄`/`cd 보냄(키)`/`c 건너뜀(이유)`/`c 보류`, `p 보냄`/`p 건너뜀`, `셸 시작 <셸>`, `셸 끝남 code=`, `안내: …`(설정 문제), `c 건너뜀(셸이 못 감)`, `입력 중 유지(프롬프트 다시 그림)`, `133;A 없는 133;B 무시`, `다시 그리기`, `설정 파일 만듦`), `keys.log`(상주 프로세스, `단축키 등록/해제`, `패널 열기`, `Sill.Key`, `메뉴`). WebView2 데이터 폴더는 `%LOCALAPPDATA%\Sill\WebView2`. 로그에는 날짜가 없으니 시험에서는 줄 수로 표시해 두고 그 뒤를 읽는다.
 - 설정: `%LOCALAPPDATA%\Sill\settings.json`의 `{"shell": "..."}` 하나(powershell, pwsh, cmd, gitbash, 그 밖에는 명령줄 그대로). 없으면 pwsh가 PATH에 있으면 pwsh, 아니면 powershell. sill-host가 세션을 시작할 때마다 읽는다. 개발자의 PC에는 이 파일이 없다(시험 뒤 지울 것). 패널 높이는 탐색기가 끌기 직후 `Explorer Bars\{CLSID}\BarSize`(패널 높이 + 4 px)에 직접 저장한다(M4).
 - 작업 표시줄 explorer가 예전 DLL을 잡고 있으면 build.ps1이 `bin\Sill.Band.*.old`로 이름을 바꿔 치운다.
 - 개발 중에는 `HKCU\...\Explorer\Advanced\SeparateProcess=1`이 켜져 있다(원래 값 0). 새 폴더 창은 `explorer.exe /factory,...` 프로세스에서 열리므로 band가 죽어도 작업 표시줄은 살아남는다. 이 설정 전에 열려 있던 창은 작업 표시줄 프로세스에 있으니 시험에 쓰지 않는다.
-- 자동화 테스트는 host-check.ps1 하나다(M1 입출력·정리 + M2 상태 판정 + M3 `p`·되먹임 목록 + M4 셸별 항목 + M6 cd 숨김·같은 크기 `r` 다시 그리기·종료 줄). sill-host의 두 번째 인수로 셸을 주므로 settings.json을 건드리지 않는다. 나머지 확인은 PowerShell `Shell.Application.Windows()`로 창을 잡아 `ShowBrowserBar`·`Navigate2`를 부르고, band.log·host.log와 `PrintWindow` 캡처로 한다.
+- 자동화 테스트는 host-check.ps1 하나다(M1 입출력·정리 + M2 상태 판정 + M3 `p`·되먹임 목록 + M4 셸별 항목 + M6 cd 숨김·같은 크기 `r` 다시 그리기·종료 줄 + M7 같은 크기 `r` 뒤 제목). sill-host의 두 번째 인수로 셸을 주므로 settings.json을 건드리지 않는다. 나머지 확인은 PowerShell `Shell.Application.Windows()`로 창을 잡아 `ShowBrowserBar`·`Navigate2`를 부르고, band.log·host.log와 `PrintWindow` 캡처로 한다.
 - `Navigate2`에는 **존재하는 경로만** 넘긴다. 없는 경로면 탐색기가 개발자 화면에 "경로 또는 주소가 정확한지 확인" 오류 창을 띄우고 0x800704C7을 돌려준다(M2에서 겪음. 빈 폴더는 `Compress-Archive`가 zip에 넣지 않는 것도 원인이었다). `powershell -File`에 배열 인수를 넘기면 하나의 문자열로 합쳐지는 것도 주의한다. `Navigate2`의 새 탭 플래그(0x800)는 무시되므로, 탭이 필요한 시험은 개발자에게 + 버튼 클릭을 부탁한다.
 - **패널에 SendInput으로 키를 보내는 시험은 포커스가 band 창의 자손인지 키마다 확인한 뒤에만 한다.** 탐색기 창 안 어딘가로만 확인하면 키가 파일 목록으로 가서 실제 파일 작업(복사·삭제·창 닫기)이 일어난다(M1에서 겪음). WebView2의 포커스 창은 msedgewebview2 스레드에 있으므로 패널 자손 창들의 스레드마다 `GetGUIThreadInfo`로 본다. 개발자가 다른 창을 쓰는 중이면 전경 잠금 때문에 시험 창을 앞으로 가져올 수 없으니, 패널 클릭을 부탁하고 기다린다. 클릭 뒤 시험이 끝날 때까지 다른 창으로 옮기지 말아 달라고도 부탁한다(M3에서 클릭 직후 개발자가 다른 창으로 가서 한 번 멈춤).
 - 시험 스크립트의 `Navigate2`도 파일 목록에 포커스를 가져간다. 그 뒤 키를 보내려면, 시험 창이 전경이고 `WindowFromPoint`가 band(또는 자식) 창일 때만 패널 아래쪽을 마우스로 클릭해 포커스를 되찾는다(M4). 패널에서 `exit`로 셸을 바꿀 때는 band.log의 `sill-host 끊김`을 본 뒤에 다시 시작 키를 보낸다(먼저 보내면 끝나 가는 셸이 먹는다).
@@ -35,6 +36,14 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
   - 패널에 포커스가 있으면 `Ctrl+Tab` 같은 탐색기 키는 터미널로 간다. 탭을 바꾸는 시험은 파일 목록에 포커스가 있을 때 한다.
   - Windows 11 메모장은 `Stop-Process`로 끝내도 세션을 저장해 두었다가 다음 실행 때 지난 창들(개발자의 창 포함)을 되살린다. 메모장을 띄우는 시험 뒤에는 연 창에만 `WM_CLOSE`를 보내고, 프로세스를 강제로 끝내지 않는다.
   - 상주 프로세스의 `CommandLine`은 `"…\sill-host.exe" keys ` 처럼 끝에 공백이 있다.
+- M7 시험에서 배운 것:
+  - 패널의 창 구조는 `ShellTabWindowClass` > `BaseBar`(위쪽 4 px 분할선, 끌면 높이가 바뀜) > `ReBarWindow32`(왼쪽 띠 머리 27 px, × 도구 모음은 rebar의 자식) > band 창. `IBandSite::SetBandSiteInfo(BSIS_NOCAPTION)`이 띠 머리와 ×를 모두 없앤다(문서에는 "제목 글자 숨김"뿐, ReactOS는 미구현). 그래도 rebar는 band 창을 x = 2에 두고 BaseBar보다 4 px 넓게 잡으므로 band 창이 `WM_WINDOWPOSCHANGING`에서 고친다.
+  - 분할선은 BaseBar 창 클래스의 바탕 브러시(`COLOR_3DFACE`, 다크에서도 #F0F0F0)다. band가 `SetWindowSubclass`로 `WM_ERASEBKGND`를 받아 칠한다. `RB_SETBKCOLOR`·`DBIMF_BKCOLOR`는 듣지 않았다.
+  - 탐색기 모양을 바꾸는 실험은 CLSID와 어셈블리 이름이 다른 시험 band를 등록해 새 창에서 한다. 개발자의 창과 Sill에 영향이 없다. 한 번 적재된 어셈블리는 탐색기가 놓지 않으므로 고칠 때마다 어셈블리 이름을 바꾼다. 끝나면 등록을 지운다.
+  - ConPTY는 셸이 제목을 정하기 전에 `lpTitle`(없으면 실행 파일 전체 경로)을 OSC 0으로 보내고, 크기를 바꿔도 제목은 다시 보내지 않는다. 그래서 같은 크기 `r`(새 페이지)에는 sill-host가 마지막 제목을 먼저 보낸다. cmd는 실행 중인 명령을 제목에 붙인다(`cmd - ping …`), Git Bash 프롬프트는 `MINGW64:/c` 같은 제목을 낸다.
+  - 라이트 모드 시험: `AppsUseLightTheme`을 바꾸고 `WM_SETTINGCHANGE`("ImmersiveColorSet")를 방송하면 열린 패널(WebView2는 레지스트리를 직접 감시)과 탐색기가 바로 바뀐다. 시험이 끝나면 0으로 되돌리고 값을 확인한다(개발자 PC는 다크).
+  - Windows 아이콘 캐시는 메뉴 아이콘을 "경로,번호"로 기억한다. exe 아이콘을 바꿔도 같은 값이면 예전 그림이 남았다(`ie4uinit -show`, `SHChangeNotify(SHCNE_ASSOCCHANGED)` 모두 안 들음). 그래서 메뉴 키는 리소스 ID(`sill-host.exe,-32512`)로 가리킨다. 아이콘을 다시 바꾸면 같은 문제가 난다(M5에서 다룸).
+  - 시험 도구: x64 `SendInput`의 `INPUT` 구조체는 유니온이 8바이트 경계에서 시작한다. 잘못 선언하면 글자가 하나도 가지 않는다(M7에서 겪음). 글자는 `VkKeyScan`과 스캔 코드로 `keybd_event`를 쓴다. 시험 중 창의 폴더가 바뀌므로 시험 창은 경로가 아니라 HWND로 다시 찾는다. 시험 스크립트는 BOM 있는 UTF-8로 저장한다(한국어 로그 문자열을 비교하므로).
 
 ## 프로젝트 개요
 
@@ -55,7 +64,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
 - **탐색기 프로세스 안의 코드는 얇게 유지한다.** band 안에서 예외나 크래시가 나면 explorer.exe 전체가 같이 죽는다. 셸 실행과 무거운 작업은 반드시 `sill-host`에서 한다.
 - Band는 `IDeskBand`, `IObjectWithSite`, `IInputObject`를 구현한다. 켜고 끄는 것은 `IWebBrowser2::ShowBrowserBar`로 한다.
 - 키 입력은 WebView2(msedgewebview2.exe) 창이 받으므로 탐색기가 가로채지 않는다(M1에서 키 24개로 확인). `TranslateAcceleratorIO`는 로그만 남긴다.
-- band ↔ sill-host는 메시지 모드 named pipe, UTF-8 문자열, 첫 글자가 종류(r 크기, i 입력, o 출력, c 탐색기 폴더, p 셸 폴더, s 설정 파일; band가 직접 처리하는 것은 p, s(메모장은 band가 띄움: sill-host의 자식은 작업 개체와 함께 끝남), x 끊김, n 다시 시작). band는 셸 출력을 해석하지 않는다(`src/Shared.cs`). 셸이 있는데 같은 크기의 r이 오면(WebView2를 다시 만든 새 페이지) sill-host가 ConPTY 크기를 한 칸 바꿨다 되돌려 화면을 다시 받는다. 그래서 페이지는 같은 크기를 두 번 보내지 않는다.
+- band ↔ sill-host는 메시지 모드 named pipe, UTF-8 문자열, 첫 글자가 종류(r 크기, i 입력, o 출력, c 탐색기 폴더, p 셸 폴더, s 설정 파일; band가 직접 처리하는 것은 p, s(메모장은 band가 띄움: sill-host의 자식은 작업 개체와 함께 끝남), x 끊김, n 다시 시작, h 탭 줄의 패널 닫기, t 앱 모드 바뀜). band는 셸 출력을 해석하지 않는다(`src/Shared.cs`). 셸이 있는데 같은 크기의 r이 오면(WebView2를 다시 만든 새 페이지) sill-host가 ConPTY 크기를 한 칸 바꿨다 되돌려 화면을 다시 받는다. 그래서 페이지는 같은 크기를 두 번 보내지 않는다.
 - WebView2의 브라우저·렌더러 프로세스가 죽으면 band가 컨트롤러를 다시 만든다(10초 안 재실패면 멈춤). 호스트 이름은 `sill.example`이다(`.local`은 이름 풀이로 첫 적재가 2초 늦었다, M6).
 - 세션은 band 수명(SetSite → CloseDW)에 묶이고 탭마다 하나다. sill-host는 자신을 KILL_ON_JOB_CLOSE 작업 개체에 넣어, 어떻게 끝나든 셸과 자식이 함께 종료된다.
 - 스택: C# / .NET Framework 4.8 (COM interop), WebView2, xterm.js, ConPTY. 필요하면 band만 C++로 옮긴다.

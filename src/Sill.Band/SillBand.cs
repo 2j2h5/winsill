@@ -1,44 +1,46 @@
 using System;
-using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
+using Microsoft.Web.WebView2.Core;
 
 [assembly: ComVisible(false)]
 
 namespace Sill.Band
 {
-    // 가로형 Explorer Bar(CATID_CommBand). M0: 회색 패널만 그리고 모든 호출을 로그로 남긴다.
-    // 탐색기 안에서 예외가 새면 탐색기가 죽으므로, 모든 COM 메서드는 Guard로 감싸 HRESULT로 돌려준다.
+    // 가로형 Explorer Bar(CATID_CommBand). M1: WebView2 + xterm.js 화면을 띄우고, 셸은 sill-host 프로세스에 맡긴다.
+    // 탐색기 안에서 예외가 새면 탐색기가 죽으므로, 모든 COM 메서드는 Guard로, 이벤트와 비동기 코드는 try/catch로 감싼다.
     // UserControl을 직접 COM에 노출하지 않는 이유: Control이 내부적으로 같은 IID(IOleWindow 등)를 구현해 충돌한다.
     [ComVisible(true), Guid(Clsid), ClassInterface(ClassInterfaceType.None)]
     public class SillBand : IDeskBand, IObjectWithSite, IPersistStream, IInputObject
     {
         public const string Clsid = "AE2C3550-FB10-4D93-B6E1-4FBED3C0AD90";
 
-        static readonly string LogPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Sill\band.log");
+        static readonly string Dir = Path.GetDirectoryName(new Uri(typeof(SillBand).Assembly.CodeBase).LocalPath);
+
+        // WebView2 환경은 만든 스레드에서만 쓸 수 있고, 탐색기는 창마다 스레드가 다르다.
+        [ThreadStatic] static Task<CoreWebView2Environment> _env;
 
         object _site;
         Control _view;
+        CoreWebView2Controller _web;
+        Session _session;
 
-        static void Log(string format, params object[] args)
-        {
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
-                File.AppendAllText(LogPath, string.Format("{0:HH:mm:ss.fff} [{1}] {2}\r\n",
-                    DateTime.Now, Process.GetCurrentProcess().Id, string.Format(format, args)));
-            }
-            catch { }
-        }
+        static void Log(string format, params object[] args) { Shared.Log("band.log", format, args); }
 
         static int Guard(string name, Func<int> body)
         {
             try { return body(); }
             catch (Exception e) { Log("{0} 예외: {1}", name, e); return Native.E_FAIL; }
+        }
+
+        static void Safe(string name, Action body)
+        {
+            try { body(); }
+            catch (Exception e) { Log("{0} 예외: {1}", name, e); }
         }
 
         public SillBand() { Log("생성"); }
@@ -63,20 +65,81 @@ namespace Sill.Band
                 Log("부모 창 0x{0:X} class={1}", parent.ToInt64(), cls);
 
                 // 문서 요구: 보이지 않는 자식 창으로 만든다. 표시는 ShowDW에서 한다.
-                _view = new Label
-                {
-                    Text = "Sill M0",
-                    TextAlign = ContentAlignment.MiddleCenter,
-                    BackColor = Color.FromArgb(200, 200, 200),
-                    Font = new Font("Segoe UI", 14f),
-                    Visible = false,
-                };
-                _view.GotFocus += (s, e) => NotifyFocus(true);
-                _view.LostFocus += (s, e) => NotifyFocus(false);
-                IntPtr old = Native.SetParent(_view.Handle, parent);
+                // 이 창은 자리만 차지하고, 화면은 그 위에 붙는 WebView2(msedgewebview2.exe)가 그린다.
+                var view = new Control { BackColor = Color.FromArgb(30, 30, 30), Visible = false };
+                view.GotFocus += (s, e) => Safe("GotFocus", () => { if (_web != null) _web.MoveFocus(CoreWebView2MoveFocusReason.Programmatic); });
+                view.Resize += (s, e) => Safe("Resize", () => { if (_web != null) _web.Bounds = view.ClientRectangle; });
+                IntPtr old = Native.SetParent(view.Handle, parent);
                 Log("SetParent 결과 old=0x{0:X} err={1}", old.ToInt64(), Marshal.GetLastWin32Error());
+                _view = view;
+
+                // 세션은 패널 여닫기가 아니라 band 수명(SetSite → CloseDW)에 묶는다(M0 결과 표 2).
+                _session = new Session(view, ToPage, Path.Combine(Dir, "sill-host.exe"));
+                InitWebView(view);
                 return Native.S_OK;
             });
+        }
+
+        async void InitWebView(Control view)
+        {
+            try
+            {
+                if (_env == null)
+                {
+                    // 탐색기 안에서는 WebView2Loader.dll을 C:\Windows에서 찾으므로 band 폴더를 알려 준다. 프로세스에서 한 번만 허용된다.
+                    try { CoreWebView2Environment.SetLoaderDllFolderPath(Dir); }
+                    catch (InvalidOperationException) { }
+                    string udf = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Sill\WebView2");
+                    _env = CoreWebView2Environment.CreateAsync(null, udf);
+                }
+                var env = await _env;
+                var web = await env.CreateCoreWebView2ControllerAsync(view.Handle);
+                if (view != _view) { web.Close(); return; }   // 기다리는 사이 band가 닫혔다
+
+                _web = web;
+                web.DefaultBackgroundColor = view.BackColor;
+                web.Bounds = view.ClientRectangle;
+                web.IsVisible = view.Visible;
+                web.GotFocus += (s, e) => Safe("web.GotFocus", () => NotifyFocus(true));
+                web.LostFocus += (s, e) => Safe("web.LostFocus", () => NotifyFocus(false));
+                web.AcceleratorKeyPressed += (s, e) =>
+                {
+                    if (e.KeyEventKind == CoreWebView2KeyEventKind.KeyDown || e.KeyEventKind == CoreWebView2KeyEventKind.SystemKeyDown)
+                        Log("AcceleratorKeyPressed vk=0x{0:X2} {1}", e.VirtualKey, e.KeyEventKind);
+                };
+
+                var core = web.CoreWebView2;
+                core.Settings.AreBrowserAcceleratorKeysEnabled = false;
+                core.Settings.AreDefaultContextMenusEnabled = false;
+                core.Settings.IsStatusBarEnabled = false;
+                core.Settings.IsZoomControlEnabled = false;
+                core.SetVirtualHostNameToFolderMapping("sill.local", Path.Combine(Dir, "web"), CoreWebView2HostResourceAccessKind.Deny);
+                core.WebMessageReceived += OnWebMessage;
+                core.ProcessFailed += (s, e) => Log("WebView2 ProcessFailed {0}", e.ProcessFailedKind);
+                core.Navigate("https://sill.local/index.html");
+                Log("WebView2 준비 (스레드 {0})", System.Threading.Thread.CurrentThread.ManagedThreadId);
+            }
+            catch (Exception e) { Log("WebView2 예외: {0}", e); }
+        }
+
+        void OnWebMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            Safe("OnWebMessage", () =>
+            {
+                string m = e.TryGetWebMessageAsString();
+                if (m == "n")
+                {
+                    // 세션이 끝난 뒤 페이지에서 키를 누르면 새 sill-host로 다시 시작한다.
+                    _session.Dispose();
+                    _session = new Session(_view, ToPage, Path.Combine(Dir, "sill-host.exe"));
+                }
+                else _session.Send(m);
+            });
+        }
+
+        void ToPage(string m)
+        {
+            if (_web != null) _web.CoreWebView2.PostWebMessageAsString(m);
         }
 
         public int GetSite(ref Guid riid, out IntPtr ppvSite)
@@ -105,6 +168,7 @@ namespace Sill.Band
             {
                 Log("ShowDW({0})", fShow);
                 if (_view != null) _view.Visible = fShow;
+                if (_web != null) _web.IsVisible = fShow;
                 return Native.S_OK;
             });
         }
@@ -143,7 +207,7 @@ namespace Sill.Band
         public int Save(object pStm, bool fClearDirty) { return Native.S_OK; }
         public int GetSizeMax(out ulong pcbSize) { pcbSize = 0; return Native.S_OK; }
 
-        // --- IInputObject: M0은 포커스만 보고한다. 키 처리는 M1 ---
+        // --- IInputObject ---
 
         public int UIActivateIO(bool fActivate, ref MSG pMsg)
         {
@@ -159,7 +223,14 @@ namespace Sill.Band
             return f == _view.Handle || Native.IsChild(_view.Handle, f) ? Native.S_OK : Native.S_FALSE;
         }
 
-        public int TranslateAcceleratorIO(ref MSG pMsg) { return Native.S_FALSE; }
+        // 키는 WebView2 프로세스의 창이 받으므로 여기로 오지 않을 것으로 본다(M1 설계 3.4절). 오는지 확인하려고 로그만 남긴다.
+        public int TranslateAcceleratorIO(ref MSG pMsg)
+        {
+            const uint WM_KEYDOWN = 0x100, WM_SYSKEYDOWN = 0x104;
+            if (pMsg.message == WM_KEYDOWN || pMsg.message == WM_SYSKEYDOWN)
+                Log("TranslateAcceleratorIO msg=0x{0:X} vk=0x{1:X2}", pMsg.message, pMsg.wParam.ToInt64());
+            return Native.S_FALSE;
+        }
 
         void NotifyFocus(bool focused)
         {
@@ -169,6 +240,8 @@ namespace Sill.Band
 
         void DestroyView()
         {
+            if (_session != null) { _session.Dispose(); _session = null; }
+            if (_web != null) { _web.Close(); _web = null; }
             if (_view == null) return;
             _view.Dispose();
             _view = null;

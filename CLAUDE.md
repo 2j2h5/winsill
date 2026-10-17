@@ -11,21 +11,24 @@ milepost로 진행한다. 상태는 `docs/reports/state.json`에 있고, 프로�
 .NET SDK가 없다. Windows에 들어 있는 `csc.exe`(C# 5 문법: 문자열 보간·`?.`·`nameof` 사용 불가)로 빌드한다. 스크립트는 PowerShell 5.1에서 읽히도록 UTF-8 BOM으로 저장한다.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build.ps1               # bin\Sill.Band.dll (폴더 창 explorer 프로세스를 먼저 종료)
+powershell -ExecutionPolicy Bypass -File .\build.ps1               # bin\ (Sill.Band.dll, sill-host.exe, WebView2 DLL, web\). 의존성은 deps\에 고정 버전으로 한 번 받음. 폴더 창 explorer와 sill-host를 먼저 종료
+powershell -ExecutionPolicy Bypass -File .\tools\host-check.ps1    # 탐색기 없이 sill-host 단독 확인 (PASS/FAIL)
 powershell -ExecutionPolicy Bypass -File .\tools\register.ps1      # HKCU에만 등록 (관리자 권한 불필요)
 powershell -ExecutionPolicy Bypass -File .\tools\toggle.ps1 on|off # 열린 모든 탐색기 창(탭)에 ShowBrowserBar
 powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 전부 삭제 (탐색기가 계속 죽을 때 탈출구)
 ```
 
-- band 호출 로그: `%LOCALAPPDATA%\Sill\band.log` (시각, PID, 메서드).
+- 로그: `%LOCALAPPDATA%\Sill\band.log`(band 호출, WebView2 키 이벤트), `host.log`(sill-host). WebView2 데이터 폴더는 `%LOCALAPPDATA%\Sill\WebView2`.
+- 작업 표시줄 explorer가 예전 DLL을 잡고 있으면 build.ps1이 `bin\Sill.Band.*.old`로 이름을 바꿔 치운다.
 - 개발 중에는 `HKCU\...\Explorer\Advanced\SeparateProcess=1`이 켜져 있다(원래 값 0). 새 폴더 창은 `explorer.exe /factory,...` 프로세스에서 열리므로 band가 죽어도 작업 표시줄은 살아남는다. 이 설정 전에 열려 있던 창은 작업 표시줄 프로세스에 있으니 시험에 쓰지 않는다.
-- 자동화 테스트는 없다. 확인은 PowerShell `Shell.Application.Windows()`로 창을 잡아 `ShowBrowserBar`를 부르고, band.log와 `PrintWindow` 캡처로 한다.
+- 자동화 테스트는 host-check.ps1 하나다. 나머지 확인은 PowerShell `Shell.Application.Windows()`로 창을 잡아 `ShowBrowserBar`를 부르고, band.log와 `PrintWindow` 캡처로 한다.
+- **패널에 SendInput으로 키를 보내는 시험은 포커스가 band 창의 자손인지 키마다 확인한 뒤에만 한다.** 탐색기 창 안 어딘가로만 확인하면 키가 파일 목록으로 가서 실제 파일 작업(복사·삭제·창 닫기)이 일어난다(M1에서 겪음). WebView2의 포커스 창은 msedgewebview2 스레드에 있으므로 패널 자손 창들의 스레드마다 `GetGUIThreadInfo`로 본다. 개발자가 다른 창을 쓰는 중이면 전경 잠금 때문에 시험 창을 앞으로 가져올 수 없으니, 패널 클릭을 부탁하고 기다린다.
 
 ## 프로젝트 개요
 
 **Sill** (저장소 `2j2h5/winsill`): Windows 탐색기 창 하단에 Dolphin(KDE)식 터미널 패널을 붙이는 셸 확장이다. 탐색기를 대체하는 앱이 아니라 탐색기 **자체**를 확장한다.
 
-## 아키텍처 (계획)
+## 아키텍처
 
 ```
 [explorer.exe]
@@ -38,7 +41,9 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
 
 - **탐색기 프로세스 안의 코드는 얇게 유지한다.** band 안에서 예외나 크래시가 나면 explorer.exe 전체가 같이 죽는다. 셸 실행과 무거운 작업은 반드시 `sill-host`에서 한다.
 - Band는 `IDeskBand`, `IObjectWithSite`, `IInputObject`를 구현한다. 켜고 끄는 것은 `IWebBrowser2::ShowBrowserBar`로 한다.
-- 키 입력 우선권(F2, Backspace, Ctrl+C 등을 탐색기가 먼저 가로채는 문제)은 `IInputObject::TranslateAcceleratorIO`에서 처리한다.
+- 키 입력은 WebView2(msedgewebview2.exe) 창이 받으므로 탐색기가 가로채지 않는다(M1에서 키 24개로 확인). `TranslateAcceleratorIO`는 로그만 남긴다.
+- band ↔ sill-host는 메시지 모드 named pipe, UTF-8 문자열, 첫 글자가 종류(r 크기, i 입력, o 출력; band가 직접 처리하는 것은 x 끊김, n 다시 시작). band는 내용을 해석하지 않는다(`src/Shared.cs`).
+- 세션은 band 수명(SetSite → CloseDW)에 묶이고 탭마다 하나다. sill-host는 자신을 KILL_ON_JOB_CLOSE 작업 개체에 넣어, 어떻게 끝나든 셸과 자식이 함께 종료된다.
 - 스택: C# / .NET Framework 4.8 (COM interop), WebView2, xterm.js, ConPTY. 필요하면 band만 C++로 옮긴다.
 
 ## 폴더 동기화 규칙

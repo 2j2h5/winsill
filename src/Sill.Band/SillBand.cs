@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
@@ -27,8 +28,10 @@ namespace Sill.Band
         [ThreadStatic] static Task<CoreWebView2Environment> _env;
 
         object _site;
-        Control _view;
+        View _view;
         CoreWebView2Controller _web;
+        Task<CoreWebView2Environment> _envUsed;    // _web을 만든 환경. 브라우저 프로세스가 죽으면 이 환경을 버린다
+        DateTime _recovered;                        // 마지막으로 WebView2를 다시 만든 시각
         Session _session;
         object _browser;                    // 이 탭의 IWebBrowser2
         ComTypes.IConnectionPoint _events;
@@ -71,7 +74,8 @@ namespace Sill.Band
 
                 // 문서 요구: 보이지 않는 자식 창으로 만든다. 표시는 ShowDW에서 한다.
                 // 이 창은 자리만 차지하고, 화면은 그 위에 붙는 WebView2(msedgewebview2.exe)가 그린다.
-                var view = new Control { BackColor = Color.FromArgb(30, 30, 30), Visible = false };
+                var view = new View { BackColor = Color.FromArgb(30, 30, 30), Visible = false, Text = "Sill" };
+                view.Key += action => Safe("Sill.Key", () => OnKey(action));
                 view.GotFocus += (s, e) => Safe("GotFocus", () => { if (_web != null) _web.MoveFocus(CoreWebView2MoveFocusReason.Programmatic); });
                 view.Resize += (s, e) => Safe("Resize", () => { if (_web != null) _web.Bounds = view.ClientRectangle; });
                 IntPtr old = Native.SetParent(view.Handle, parent);
@@ -99,11 +103,13 @@ namespace Sill.Band
                     string udf = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Sill\WebView2");
                     _env = CoreWebView2Environment.CreateAsync(null, udf);
                 }
-                var env = await _env;
+                var envTask = _env;
+                var env = await envTask;
                 var web = await env.CreateCoreWebView2ControllerAsync(view.Handle);
                 if (view != _view) { web.Close(); return; }   // 기다리는 사이 band가 닫혔다
 
                 _web = web;
+                _envUsed = envTask;
                 web.DefaultBackgroundColor = view.BackColor;
                 web.Bounds = view.ClientRectangle;
                 web.IsVisible = view.Visible;
@@ -120,13 +126,33 @@ namespace Sill.Band
                 core.Settings.AreDefaultContextMenusEnabled = false;
                 core.Settings.IsStatusBarEnabled = false;
                 core.Settings.IsZoomControlEnabled = false;
-                core.SetVirtualHostNameToFolderMapping("sill.local", Path.Combine(Dir, "web"), CoreWebView2HostResourceAccessKind.Deny);
+                // .local은 멀티캐스트 DNS 이름이라 첫 적재가 2초 늦었다. .example은 예약된 이름이다(M6 설계 2.2절).
+                core.SetVirtualHostNameToFolderMapping("sill.example", Path.Combine(Dir, "web"), CoreWebView2HostResourceAccessKind.Deny);
                 core.WebMessageReceived += OnWebMessage;
-                core.ProcessFailed += (s, e) => Log("WebView2 ProcessFailed {0}", e.ProcessFailedKind);
-                core.Navigate("https://sill.local/index.html");
+                core.ProcessFailed += (s, e) => Safe("ProcessFailed", () => Recover(e.ProcessFailedKind));
+                core.Navigate("https://sill.example/index.html");
+                // 패널을 열 때 UIActivateIO가 컨트롤러보다 먼저 와서 포커스가 band 창에 남는다. 그대로 두면 키가 사라진다(M6 시험).
+                if (view.Focused) web.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
                 Log("WebView2 준비 (스레드 {0})", System.Threading.Thread.CurrentThread.ManagedThreadId);
             }
             catch (Exception e) { Log("WebView2 예외: {0}", e); }
+        }
+
+        // M6 설계 3.3절: 브라우저나 렌더러 프로세스가 죽으면 컨트롤러를 다시 만든다. sill-host와 셸은 그대로이고,
+        // 새 페이지가 보내는 같은 크기의 r로 sill-host가 화면을 다시 그린다. 런타임이 깨졌을 때 되풀이하지 않도록 10초 안의 재실패는 두고 본다.
+        void Recover(CoreWebView2ProcessFailedKind kind)
+        {
+            Log("WebView2 ProcessFailed {0}", kind);
+            if (kind != CoreWebView2ProcessFailedKind.BrowserProcessExited && kind != CoreWebView2ProcessFailedKind.RenderProcessExited
+                && kind != CoreWebView2ProcessFailedKind.FrameRenderProcessExited) return;
+            if (DateTime.Now - _recovered < TimeSpan.FromSeconds(10)) { Log("WebView2 다시 만들지 않음(10초 안에 또 실패)"); return; }
+            _recovered = DateTime.Now;
+            if (kind == CoreWebView2ProcessFailedKind.BrowserProcessExited && _env == _envUsed) _env = null;
+            var web = _web;
+            _web = null;
+            Safe("web.Close", () => web.Close());
+            Log("WebView2 다시 만들기");
+            InitWebView(_view);
         }
 
         void OnWebMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -134,21 +160,83 @@ namespace Sill.Band
             Safe("OnWebMessage", () =>
             {
                 string m = e.TryGetWebMessageAsString();
-                if (m == "n")
-                {
-                    // 세션이 끝난 뒤 페이지에서 키를 누르면 새 sill-host로 다시 시작한다.
-                    _session.Dispose();
-                    _session = new Session(_view, ToPage, Path.Combine(Dir, "sill-host.exe"));
-                    SendFolder("다시 시작");
-                }
+                // 세션이 끝난 뒤 페이지에서 키를 누르면 새 sill-host로 다시 시작한다.
+                if (m == "n") Restart("다시 시작");
                 else _session.Send(m);
             });
+        }
+
+        void Restart(string why)
+        {
+            _session.Dispose();
+            _session = new Session(_view, ToPage, Path.Combine(Dir, "sill-host.exe"));
+            SendFolder(why);
         }
 
         void ToPage(string m)
         {
             if (m.StartsWith("p")) Safe("셸 폴더", () => Navigate(m.Substring(1)));
+            // Ctrl+,: sill-host의 자식은 작업 개체와 함께 끝나므로 메모장은 band가 띄운다(M6 설계 3.6절).
+            else if (m.StartsWith("s")) Safe("설정 파일", () => Process.Start("notepad.exe", "\"" + m.Substring(1) + "\""));
             else if (_web != null) _web.CoreWebView2.PostWebMessageAsString(m);
+        }
+
+        // --- 단축키와 오른쪽 클릭 메뉴(M6 설계 표 4): 상주 프로세스가 활성 탭의 band 창에 보낸다 ---
+
+        void OnKey(int action)
+        {
+            const int KeyToggle = 0, KeyRestart = 1;
+            bool focused = PanelFocused();
+            Log("Sill.Key {0} 포커스={1}", action, focused);
+            if (action == KeyRestart)
+            {
+                Restart("다시 시작 키");
+                if (_web != null) _web.CoreWebView2.PostWebMessageAsString("n");   // 페이지가 화면을 지우고 크기를 보낸다
+            }
+            else if (action == KeyToggle && focused)
+            {
+                FocusFileList();
+                // 창 메시지 처리 중에 바를 닫지 않고 메시지 루프로 미룬다.
+                _view.BeginInvoke(new Action(() => Safe("패널 닫기", () =>
+                    _browser.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, _browser, new object[] { "{" + Clsid + "}", false, null }))));
+                return;
+            }
+            _view.Focus();
+        }
+
+        // WebView2의 GotFocus는 페이지 안에서 준 포커스에는 오지 않는다. 포커스 창은 msedgewebview2 스레드에 있으므로
+        // 패널과 그 자손 창의 스레드마다 포커스 창을 본다(M1 시험과 같은 방법).
+        bool PanelFocused()
+        {
+            IntPtr panel = _view.Handle;
+            var threads = new System.Collections.Generic.HashSet<uint> { Native.GetWindowThreadProcessId(panel, IntPtr.Zero) };
+            Native.EnumChildWindows(panel, (h, l) => { threads.Add(Native.GetWindowThreadProcessId(h, IntPtr.Zero)); return true; }, IntPtr.Zero);
+            foreach (uint tid in threads)
+            {
+                var info = new GUITHREADINFO { cbSize = Marshal.SizeOf(typeof(GUITHREADINFO)) };
+                // band 창 자체의 포커스는 키를 WebView2로 넘기지 못하므로 패널 포커스로 치지 않는다.
+                if (Native.GetGUIThreadInfo(tid, ref info) && Native.IsChild(panel, info.hwndFocus)) return true;
+            }
+            return false;
+        }
+
+        void FocusFileList()
+        {
+            object view;
+            IntPtr hwnd;
+            var sb = ShellBrowser();
+            if (sb == null || sb.QueryActiveShellView(out view) != Native.S_OK || ((IShellView)view).GetWindow(out hwnd) != Native.S_OK) { Log("파일 목록 없음"); return; }
+            Native.SetFocus(hwnd);
+        }
+
+        IShellBrowser ShellBrowser()
+        {
+            var sidTopLevelBrowser = new Guid("4C96BE40-915C-11CF-99D3-00AA004AE837");
+            var iid = typeof(IShellBrowser).GUID;
+            object sb;
+            int hr = ((IServiceProvider)_site).QueryService(ref sidTopLevelBrowser, ref iid, out sb);
+            if (hr != Native.S_OK) { Log("IShellBrowser 없음 hr=0x{0:X8}", hr); return null; }
+            return (IShellBrowser)sb;
         }
 
         // --- 터미널 → 탐색기 (M3 설계 3.4절): sill-host가 정한 폴더로 이동만 한다. 돌아오는 c는 sill-host가 버린다. ---
@@ -159,14 +247,12 @@ namespace Sill.Band
         {
             const uint SBSP_SAMEBROWSER = 0x1, SBSP_ABSOLUTE = 0x0, SBSP_ACTIVATE_NOFOCUS = 0x80000;
             Log("셸 폴더 {0}", path);
-            var sidTopLevelBrowser = new Guid("4C96BE40-915C-11CF-99D3-00AA004AE837");
-            var iid = typeof(IShellBrowser).GUID;
-            object sb;
-            int hr = ((IServiceProvider)_site).QueryService(ref sidTopLevelBrowser, ref iid, out sb);
-            if (hr != Native.S_OK) { Log("IShellBrowser 없음 hr=0x{0:X8}", hr); return; }
+            var sb = ShellBrowser();
+            if (sb == null) return;
             IntPtr pidl = Native.ILCreateFromPathW(path);
             if (pidl == IntPtr.Zero) { Log("PIDL 실패 {0}", path); return; }
-            try { hr = ((IShellBrowser)sb).BrowseObject(pidl, SBSP_SAMEBROWSER | SBSP_ABSOLUTE | SBSP_ACTIVATE_NOFOCUS); }
+            int hr;
+            try { hr = sb.BrowseObject(pidl, SBSP_SAMEBROWSER | SBSP_ABSOLUTE | SBSP_ACTIVATE_NOFOCUS); }
             finally { Native.ILFree(pidl); }
             if (hr != Native.S_OK) Log("BrowseObject hr=0x{0:X8}", hr);
         }
@@ -305,6 +391,19 @@ namespace Sill.Band
             if (_view == null) return;
             _view.Dispose();
             _view = null;
+        }
+    }
+
+    // band 창. 상주 프로세스가 제목("Sill")으로 찾아 Sill.Key 메시지를 보낸다(M6 설계 3.1절). wParam: 0 토글, 1 다시 시작, 2 포커스.
+    sealed class View : Control
+    {
+        static readonly uint KeyMessage = Native.RegisterWindowMessage("Sill.Key");
+        public event Action<int> Key;
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == (int)KeyMessage && Key != null) { Key(m.WParam.ToInt32()); return; }
+            base.WndProc(ref m);
         }
     }
 

@@ -50,3 +50,6 @@ if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 Copy-Item $core, "$wv2\runtimes\win-x64\native\WebView2Loader.dll" $out
 Copy-Item "$root\web\*", "$xterm\package\lib\xterm.js", "$xterm\package\css\xterm.css", "$fit\package\lib\addon-fit.js" "$out\web"
+
+# 단축키 상주 프로세스(sill-host keys)도 위에서 함께 끝냈으므로, 등록되어 있으면 새 exe로 다시 띄운다.
+if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sill -ErrorAction SilentlyContinue) { Start-Process "$out\sill-host.exe" keys }

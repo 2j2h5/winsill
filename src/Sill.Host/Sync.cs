@@ -18,10 +18,14 @@ namespace Sill.Host
 
         readonly object _lock = new object();
         public string StartDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        // 셸 통합의 키 처리기가 받는 키(Ctrl+Alt+Shift+F12). 경로는 _keyFile로 건넨다(M6 설계 3.4절).
+        const string CdKey = "\x1b[24;8~";
         Pty _pty;
         Func<string, string> _cd;
+        string _keyFile;
         int _state = Busy;      // 프로필 적재 중에는 실행 중으로 본다
         bool _ownCd;            // 실행 중인 것이 Sill이 넣은 cd
+        bool _prompt;           // 실행 중이 된 뒤 새 프롬프트의 시작(133;A)을 봤다
         string _pending;        // _ownCd 동안 받은 마지막 폴더
         string _cwd = "";       // 마지막 OSC 9;9
         string _moved;          // 이번 Output에서 탐색기에 알릴 폴더
@@ -31,7 +35,7 @@ namespace Sill.Host
 
         static void Log(string format, params object[] args) { Shared.Log("host.log", format, args); }
 
-        public void Started(Pty pty, Func<string, string> cd) { lock (_lock) { _pty = pty; _cd = cd; } }
+        public void Started(Pty pty, Func<string, string> cd, string keyFile) { lock (_lock) { _pty = pty; _cd = cd; _keyFile = keyFile; } }
 
         public void Folder(string path)
         {
@@ -58,7 +62,7 @@ namespace Sill.Host
             lock (_lock)
             {
                 // Ctrl+C도 줄을 끝낸다. 입력 중에 누르면 셸이 줄을 버리고 새 프롬프트를 낸다.
-                if (data.IndexOf('\r') >= 0 || data.IndexOf('\x03') >= 0) { _state = Busy; _ownCd = false; _pending = null; }
+                if (data.IndexOf('\r') >= 0 || data.IndexOf('\x03') >= 0) { _state = Busy; _prompt = false; _ownCd = false; _pending = null; }
                 else if (_state == Idle && !Report.IsMatch(data)) _state = Typing;
             }
         }
@@ -94,11 +98,14 @@ namespace Sill.Host
                 // 첫 프롬프트와 Sill이 넣은 cd의 결과는 알리지 않는다. OSC 9;9는 133;B보다 먼저 오므로 _ownCd가 아직 켜져 있다.
                 if (prev.Length > 0 && !SameDir(prev, _cwd) && !_ownCd) { _moved = _cwd; _echo.Enqueue(_cwd); }
             }
-            else if (s.StartsWith("133;C")) _state = Busy;
+            else if (s.StartsWith("133;C")) { _state = Busy; _prompt = false; }
+            else if (s.StartsWith("133;A")) _prompt = true;
             else if (s == "133;B")
             {
                 // Ctrl+L은 입력 줄을 둔 채 프롬프트를 다시 그린다(PSReadLine은 prompt를 다시 부르고, bash는 PS1만 다시 낸다). 입력 중이면 그대로 둔다(M4).
                 if (_state == Typing) { Log("입력 중 유지(프롬프트 다시 그림)"); return; }
+                // bash는 bind -x 함수(Sill의 cd 키) 뒤에 줄을 다시 그리며 133;A 없이 133;B만 낸다. 실행이 끝난 것은 새 프롬프트뿐이다(M6).
+                if (_state == Busy && !_prompt) { Log("133;A 없는 133;B 무시"); return; }
                 _state = Idle;
                 string next = _ownCd ? _pending : null;
                 _ownCd = false;
@@ -116,10 +123,12 @@ namespace Sill.Host
         {
             string line = _cd == null ? null : _cd(path);
             if (line == null) { Log("c 건너뜀(셸이 못 감) {0}", path); return; }
-            _pty.Write(line);
+            // 셸 통합이 키 처리기를 등록했으면(파일이 있으면) 키로 보내 화면과 명령 기록에 cd가 남지 않게 한다. 없으면(cmd) 한 줄을 입력한다.
+            if (File.Exists(_keyFile)) { File.WriteAllText(_keyFile, path); _pty.Write(CdKey); Log("cd 보냄(키) {0}", path); }
+            else { _pty.Write(line); Log("cd 보냄 {0}", path); }
             _state = Busy;
+            _prompt = false;
             _ownCd = true;
-            Log("cd 보냄 {0}", path);
         }
     }
 }

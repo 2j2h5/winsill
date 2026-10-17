@@ -1,12 +1,14 @@
 using System;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
-using System.Web.Script.Serialization;
 using Microsoft.Win32.SafeHandles;
 
 namespace Sill.Host
@@ -24,6 +26,8 @@ namespace Sill.Host
         static int Main(string[] args)
         {
             // keys: 단축키 상주 프로세스, open: 오른쪽 클릭 메뉴(M6 설계 3.1·3.7절). 그 밖에는 band가 준 파이프 이름이다.
+            // 인수가 없으면(bin에서 더블클릭) 할 일이 없다(M8).
+            if (args.Length == 0) return 0;
             if (args[0] == "keys") return Keys.Run();
             if (args[0] == "open") return Keys.Open(args.Length > 1 ? args[1] : "");
             try { Run(args[0], args.Length > 1 ? args[1] : null); }
@@ -46,8 +50,11 @@ namespace Sill.Host
             KillChildrenOnExit();
             File.Delete(KeyFile);
             Environment.SetEnvironmentVariable("SILL_CD", KeyFile);   // 셸이 물려받는다
+            // 파이프는 현재 사용자만 연다. 기본 DACL은 Everyone에게 읽기를 준다(M8 설계 3.5절).
+            var security = new PipeSecurity();
+            security.AddAccessRule(new PipeAccessRule(WindowsIdentity.GetCurrent().User, PipeAccessRights.FullControl, AccessControlType.Allow));
             // Asynchronous: 읽기(이 스레드)와 쓰기(출력 스레드)가 같은 핸들에서 서로 막지 않게 한다.
-            using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Message, PipeOptions.Asynchronous))
+            using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Message, PipeOptions.Asynchronous, 0, 0, security))
             {
                 var wait = pipe.BeginWaitForConnection(null, null);
                 if (!wait.AsyncWaitHandle.WaitOne(10000)) { Log("연결 시간 초과"); return; }
@@ -57,13 +64,28 @@ namespace Sill.Host
                 Shell shell = null;
                 short cols = 0, rows = 0;
                 var sync = new Sync();
+                // 출력 보내기 스레드: 16 ms에 한 번까지. 쉬는 동안 온 출력은 다음 메시지에 함께 간다(M8 설계 3.1절).
+                new Thread(() =>
+                {
+                    try { while (true) { OutReady.WaitOne(); Flush(pipe); Thread.Sleep(16); } }
+                    catch (Exception e) { Log("보내기 중단: {0}", e.Message); }
+                }) { IsBackground = true }.Start();
+                // 셸이 시작된 뒤의 c는 작업 스레드가 받은 순서대로 처리한다. 끊긴 네트워크 경로의 폴더 확인(약 21 s)이 입력을 막지 않게 한다(M8 설계 3.3절).
+                var folders = new BlockingCollection<string>();
+                new Thread(() =>
+                {
+                    foreach (var f in folders.GetConsumingEnumerable())
+                        try { sync.Folder(f); }
+                        catch (Exception e) { Log("c 처리 예외: {0}", e.Message); }
+                }) { IsBackground = true }.Start();
                 string m;
                 while ((m = Shared.Read(pipe)) != null)
                 {
                     if (m.Length == 0) continue;
                     if (m[0] == 'i' && pty != null) { sync.Input(m.Substring(1)); pty.Write(m.Substring(1)); }
-                    else if (m[0] == 'c') sync.Folder(m.Substring(1));
-                    else if (m[0] == 's') OpenSettings(pipe, shell);
+                    else if (m[0] == 'c' && pty == null) sync.StartDir = m.Substring(1);   // 확인은 셸을 띄울 때 한 번
+                    else if (m[0] == 'c') folders.Add(m.Substring(1));
+                    else if (m[0] == 's') OpenSettings(pipe);
                     else if (m[0] == 'r')
                     {
                         var size = m.Substring(1).Split(',');
@@ -75,7 +97,7 @@ namespace Sill.Host
                             if (c == cols && r == rows)
                             {
                                 Log("다시 그리기");
-                                if (sync.Title != null) Shared.Write(pipe, "o\x1b]0;" + sync.Title + "\x07");
+                                if (sync.Title != null) Out("\x1b]0;" + sync.Title + "\x07");
                                 pty.Resize((short)(c - 1), r);
                             }
                             pty.Resize(c, r);
@@ -85,13 +107,18 @@ namespace Sill.Host
                         cols = c; rows = r;
 
                         // 설정 문제는 셸 출력보다 먼저 패널에 한 줄로 알린다. 셸을 띄우지 못하면 끝내고, band가 다시 시작을 안내한다.
-                        Action<string> notice = s => { Log("안내: {0}", s); Shared.Write(pipe, "o\x1b[90m[Sill] " + s + "\x1b[0m\r\n"); };
+                        Action<string> notice = s => { Log("안내: {0}", s); Out("\x1b[90m[Sill] " + s + "\x1b[0m\r\n"); };
                         shell = Shell.Choose(shellArg, notice);
-                        if (shell == null) { pipe.WaitForPipeDrain(); return; }   // 안내 줄을 band가 읽은 뒤에 닫는다
+                        if (shell == null) { Flush(pipe); pipe.WaitForPipeDrain(); return; }   // 안내 줄을 band가 읽은 뒤에 닫는다
+                        // zip 안처럼 탐색기에서만 열리는 폴더, 그 셸이 갈 수 없는 폴더(cmd의 UNC)면 홈에서 시작한다.
                         string dir = sync.StartDir;
-                        if (shell.Cd != null && shell.Cd(dir) == null) dir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                        if (!Directory.Exists(dir) || (shell.Cd != null && shell.Cd(dir) == null))
+                        {
+                            Log("시작 폴더 아님 {0}", dir);
+                            dir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                        }
                         try { pty = Pty.Start(shell.CommandLine, shell.Title, cols, rows, dir); }
-                        catch (Win32Exception e) { notice("Cannot start the shell: " + shell.Name + " (" + e.Message + ")"); pipe.WaitForPipeDrain(); return; }
+                        catch (Win32Exception e) { notice("Cannot start the shell: " + shell.Name + " (" + e.Message + ")"); Flush(pipe); pipe.WaitForPipeDrain(); return; }
                         Log("셸 시작 {0} pid={1} {2}x{3} {4}", shell.Name, pty.Process.Id, cols, rows, dir);
                         sync.Started(pty, shell.Cd, KeyFile);
                         var started = pty;
@@ -105,7 +132,8 @@ namespace Sill.Host
                             Thread.Sleep(100);
                             try
                             {
-                                Shared.Write(pipe, string.Format("o\r\n\x1b[90m[process exited with code {0} (0x{0:X8})]\x1b[0m\r\n", code));
+                                Out(string.Format("\r\n\x1b[90m[process exited with code {0} (0x{0:X8})]\x1b[0m\r\n", code));
+                                Flush(pipe);
                                 pipe.WaitForPipeDrain();
                             }
                             catch (Exception e) { Log("종료 줄 실패: {0}", e.Message); }
@@ -117,7 +145,28 @@ namespace Sill.Host
             }
         }
 
-        // ConPTY 출력(UTF-8)을 글자 경계에서 끊어 o 메시지로 보낸다. 셸이 사용자의 명령으로 폴더를 옮겼으면 p도 보낸다.
+        // 보낼 출력. 출력 조각마다 메시지를 보내면 탐색기의 band가 메시지마다 UI 스레드를 깨운다(대량 출력 중 탐색기 CPU 57 %, M8 설계 2.2절).
+        static readonly StringBuilder Pending = new StringBuilder();
+        static readonly AutoResetEvent OutReady = new AutoResetEvent(false);
+
+        static void Out(string s)
+        {
+            lock (Pending) Pending.Append(s);
+            OutReady.Set();
+        }
+
+        // 모인 출력을 o 하나로 보낸다. 꺼내기와 쓰기를 한 잠금 안에서 하므로, 뒤에 보내는 p·종료 줄이 앞의 출력을 앞지르지 않는다.
+        static void Flush(PipeStream pipe)
+        {
+            lock (Pending)
+            {
+                if (Pending.Length == 0) return;
+                Shared.Write(pipe, "o" + Pending);
+                Pending.Clear();
+            }
+        }
+
+        // ConPTY 출력(UTF-8)을 글자 경계에서 끊어 보낼 출력에 붙인다. 셸이 사용자의 명령으로 폴더를 옮겼으면 p도 보낸다.
         static void Pump(Pty pty, PipeStream pipe, Sync sync)
         {
             try
@@ -132,10 +181,11 @@ namespace Sill.Host
                     if (c == 0) continue;
                     var text = new string(chars, 0, c);
                     string moved = sync.Output(text);
-                    Shared.Write(pipe, "o" + text);
+                    Out(text);
                     if (moved == null) continue;
                     // 없는 경로로 이동하면 탐색기가 오류 창을 띄운다(M2 결과 3.3절).
                     if (!Directory.Exists(moved)) { Log("p 건너뜀(폴더 아님) {0}", moved); continue; }
+                    Flush(pipe);
                     Shared.Write(pipe, "p" + moved);
                     Log("p 보냄 {0}", moved);
                 }
@@ -143,14 +193,14 @@ namespace Sill.Host
             catch (Exception e) { Log("출력 중단: {0}", e.Message); }
         }
 
-        // Ctrl+,(M6 설계 3.6절). 파일이 없으면 지금 셸 값으로 만든다. 메모장은 band가 띄운다. 이 프로세스의 자식은 작업 개체와 함께 끝나기 때문이다.
-        static void OpenSettings(PipeStream pipe, Shell shell)
+        // Ctrl+,(M6 설계 3.6절). 파일이 없으면 빈 shell(자동 선택)로 만든다. 지금 셸 값을 쓰면 자동 선택이 꺼진다(M8).
+        // 메모장은 band가 띄운다. 이 프로세스의 자식은 작업 개체와 함께 끝나기 때문이다.
+        static void OpenSettings(PipeStream pipe)
         {
             if (!File.Exists(Shell.SettingsPath))
             {
-                string value = shell == null ? "" : shell.Value;
-                File.WriteAllText(Shell.SettingsPath, "{\"shell\": " + new JavaScriptSerializer().Serialize(value) + "}\r\n");
-                Log("설정 파일 만듦 {0}", value);
+                File.WriteAllText(Shell.SettingsPath, "{\"shell\": \"\"}\r\n");
+                Log("설정 파일 만듦");
             }
             Shared.Write(pipe, "s" + Shell.SettingsPath);
         }

@@ -29,7 +29,10 @@ namespace Sill.Host
         string _pending;        // _ownCd 동안 받은 마지막 폴더
         string _cwd = "";       // 마지막 OSC 9;9
         string _moved;          // 이번 Output에서 탐색기에 알릴 폴더
-        readonly Queue<string> _echo = new Queue<string>();   // p로 보낸 폴더. 탐색기가 따라온 뒤 돌려주는 c를 버린다
+        // p로 보낸 폴더와 보낸 시각. 탐색기가 따라온 뒤 돌려주는 c를 버린다. 따라오지 못한(BrowseObject 실패) 항목이
+        // 나중의 같은 폴더 이동을 삼키지 않도록 2초 지난 항목은 맞춰 보지 않는다. 따라오는 c는 M3에서 중앙값 56.5 ms였다(M8 설계 표 4).
+        readonly Queue<Tuple<string, DateTime>> _echo = new Queue<Tuple<string, DateTime>>();
+        static readonly TimeSpan EchoLife = TimeSpan.FromSeconds(2);
         StringBuilder _osc;     // ESC ] 뒤를 모으는 중
         bool _esc;
 
@@ -37,17 +40,20 @@ namespace Sill.Host
 
         public void Started(Pty pty, Func<string, string> cd, string keyFile) { lock (_lock) { _pty = pty; _cd = cd; _keyFile = keyFile; } }
 
+        // 셸이 시작된 뒤의 c. sill-host의 폴더 작업 스레드가 받은 순서대로 부른다(M8 설계 3.3절). 시작 전의 c는 StartDir에 바로 들어간다.
         public void Folder(string path)
         {
             // 셸의 이동(p)을 탐색기가 따라온 것이면 버린다. Dolphin의 m_sendCdToTerminalHistory와 같이 맞는 항목 앞의 것도 함께 버린다.
             lock (_lock)
                 while (_echo.Count > 0)
-                    if (SameDir(_echo.Dequeue(), path)) { Log("c 건너뜀(셸이 옮김) {0}", path); return; }
-            // zip 안처럼 탐색기에서만 열리는 경로를 거른다. 네트워크 경로는 여기서 늦어질 수 있지만 탐색기와는 상관없다.
+                {
+                    var e = _echo.Dequeue();
+                    if (SameDir(e.Item1, path) && DateTime.UtcNow - e.Item2 < EchoLife) { Log("c 건너뜀(셸이 옮김) {0}", path); return; }
+                }
+            // zip 안처럼 탐색기에서만 열리는 경로를 거른다. 끊긴 네트워크 경로면 여기서 20초 넘게 걸리므로 작업 스레드에서 부른다.
             if (!Directory.Exists(path)) { Log("c 건너뜀(폴더 아님) {0}", path); return; }
             lock (_lock)
             {
-                if (_pty == null) { StartDir = path; return; }
                 // 같은 폴더 비교는 대기 중에만 한다. Sill의 cd가 도는 동안 _cwd는 아직 이전 폴더다.
                 if (_state == Idle && SameDir(path, _cwd)) Log("c 건너뜀(같은 폴더) {0}", path);
                 else if (_state == Idle) Cd(path);
@@ -84,6 +90,9 @@ namespace Sill.Host
                     else if (afterEsc || _osc.Length > 4096) _osc = null;
                     else if (!_esc) _osc.Append(ch);
                 }
+                // 한 번에 읽은 출력에 프롬프트가 여럿이면(cd 두 줄을 붙여 넣음) 마지막 폴더만 알린다. 되먹임 목록에도 알린 것만 넣는다.
+                // 전에는 중간 폴더도 넣어 탐색기가 돌려주지 않는 항목이 남았다(M8 시험에서 찾음).
+                if (_moved != null) _echo.Enqueue(Tuple.Create(_moved, DateTime.UtcNow));
                 return _moved;
             }
         }
@@ -100,7 +109,7 @@ namespace Sill.Host
                 _cwd = s.Substring(4).Trim('"');
                 Log("OSC 9;9 {0}", _cwd);
                 // 첫 프롬프트와 Sill이 넣은 cd의 결과는 알리지 않는다. OSC 9;9는 133;B보다 먼저 오므로 _ownCd가 아직 켜져 있다.
-                if (prev.Length > 0 && !SameDir(prev, _cwd) && !_ownCd) { _moved = _cwd; _echo.Enqueue(_cwd); }
+                if (prev.Length > 0 && !SameDir(prev, _cwd) && !_ownCd) _moved = _cwd;
             }
             else if (s.StartsWith("133;C")) { _state = Busy; _prompt = false; }
             else if (s.StartsWith("133;A")) _prompt = true;

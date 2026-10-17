@@ -13,7 +13,6 @@ namespace Sill.Host
     {
         public string Name;
         public string Title;                // 셸의 시작 제목. 패널의 탭 제목이 된다(M7 설계 3.4절)
-        public string Value;                // settings.json의 shell 값(Ctrl+,로 파일을 만들 때 쓴다)
         public string CommandLine;
         public Func<string, string> Cd;     // cd 한 줄(Enter 포함). 그 셸이 갈 수 없는 경로면 null. 셸 통합이 없으면 Cd 자체가 null
 
@@ -39,11 +38,15 @@ try {
 
         // --rcfile은 로그인 셸 파일을 읽지 않으므로 직접 읽는다(VS Code와 같음). ST 대신 BEL로 끝낸다(설계 표 1).
         // Sill의 cd 키는 cd만 하는 함수(\e[99~)를 부르고 빈 줄로 Enter한다. bind -x 안에서는 프롬프트가 다시 계산되지 않아서다(M6 설계 표 5).
+        // starship처럼 프롬프트마다 PS1을 새로 쓰는 설정은 133;B를 지운다. PROMPT_COMMAND 배열의 끝(bash 5.1부터 모두 실행)에서
+        // B가 없으면 다시 붙인다. 그보다 오래된 bash는 첫 원소만 실행하므로 __sill_b가 돌지 않고 전과 같다(M8 설계 3.2절).
         const string BashIntegration = @"[ -r /etc/profile ] && . /etc/profile
 if [ -r ~/.bash_profile ]; then . ~/.bash_profile; elif [ -r ~/.bash_login ]; then . ~/.bash_login; elif [ -r ~/.profile ]; then . ~/.profile; fi
 __sill_prompt() { local s=$?; printf '\e]133;A\a\e]9;9;%s\a' ""$(cygpath -w ""$PWD"")""; return $s; }
 PROMPT_COMMAND=""__sill_prompt${PROMPT_COMMAND:+; $PROMPT_COMMAND}""
 PS1=""$PS1""'\[\e]133;B\a\]'
+__sill_b() { [[ $PS1 == *'133;B'* ]] || PS1=""$PS1""'\[\e]133;B\a\]'; }
+PROMPT_COMMAND+=(__sill_b)
 __sill_cd() { cd -- ""$(cat -- ""$SILL_CD"")""; }
 bind -x '""\e[99~"": __sill_cd'
 bind '""\e[24;8~"": ""\e[99~\C-m""'
@@ -56,17 +59,14 @@ bind '""\e[24;8~"": ""\e[99~\C-m""'
             if (value == null) value = FromSettings(notice);
             string key = (value ?? "").ToLowerInvariant();
             if (key == "") key = OnPath("pwsh.exe") != null ? "pwsh" : "powershell";
-            Shell shell;
             switch (key)
             {
-                case "powershell": shell = PowerShell("powershell.exe"); break;
-                case "pwsh": shell = PowerShell("pwsh.exe"); break;
-                case "cmd": shell = Cmd(); break;
-                case "gitbash": shell = GitBash(notice); break;
-                default: return new Shell { Name = value, Value = value, CommandLine = value, Title = TitleOf(value) };
+                case "powershell": return PowerShell("powershell.exe");
+                case "pwsh": return PowerShell("pwsh.exe");
+                case "cmd": return Cmd();
+                case "gitbash": return GitBash(notice);
+                default: return new Shell { Name = value, CommandLine = value, Title = TitleOf(value) };
             }
-            if (shell != null) shell.Value = key;
-            return shell;
         }
 
         static string FromSettings(Action<string> notice)

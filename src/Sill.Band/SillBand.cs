@@ -1,11 +1,13 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
+using ComTypes = System.Runtime.InteropServices.ComTypes;
 
 [assembly: ComVisible(false)]
 
@@ -28,6 +30,9 @@ namespace Sill.Band
         Control _view;
         CoreWebView2Controller _web;
         Session _session;
+        object _browser;                    // 이 탭의 IWebBrowser2
+        ComTypes.IConnectionPoint _events;
+        int _cookie;
 
         static void Log(string format, params object[] args) { Shared.Log("band.log", format, args); }
 
@@ -75,6 +80,8 @@ namespace Sill.Band
 
                 // 세션은 패널 여닫기가 아니라 band 수명(SetSite → CloseDW)에 묶는다(M0 결과 표 2).
                 _session = new Session(view, ToPage, Path.Combine(Dir, "sill-host.exe"));
+                Safe("탐색기 이벤트 연결", () => WatchBrowser(pUnkSite));
+                Safe("시작 폴더", () => SendFolder("시작"));
                 InitWebView(view);
                 return Native.S_OK;
             });
@@ -132,6 +139,7 @@ namespace Sill.Band
                     // 세션이 끝난 뒤 페이지에서 키를 누르면 새 sill-host로 다시 시작한다.
                     _session.Dispose();
                     _session = new Session(_view, ToPage, Path.Combine(Dir, "sill-host.exe"));
+                    SendFolder("다시 시작");
                 }
                 else _session.Send(m);
             });
@@ -140,6 +148,35 @@ namespace Sill.Band
         void ToPage(string m)
         {
             if (_web != null) _web.CoreWebView2.PostWebMessageAsString(m);
+        }
+
+        // --- 탐색기 → 터미널 (M2 설계 3.2절): 폴더가 바뀌면 경로만 sill-host에 보낸다. cd를 넣을지는 sill-host가 정한다. ---
+
+        void WatchBrowser(object site)
+        {
+            var sidWebBrowserApp = new Guid("0002DF05-0000-0000-C000-000000000046");
+            var iidWebBrowser2 = new Guid("D30C1661-CDAF-11D0-8A3E-00C04FC9E26E");
+            int hr = ((IServiceProvider)site).QueryService(ref sidWebBrowserApp, ref iidWebBrowser2, out _browser);
+            if (hr != Native.S_OK) { Log("IWebBrowser2 없음 hr=0x{0:X8}", hr); return; }
+            var iid = typeof(DWebBrowserEvents2).GUID;
+            ((ComTypes.IConnectionPointContainer)_browser).FindConnectionPoint(ref iid, out _events);
+            _events.Advise(new BrowserEvents(() => Safe("NavigateComplete2", () => SendFolder("이동"))), out _cookie);
+        }
+
+        void SendFolder(string why)
+        {
+            if (_browser == null || _session == null) return;
+            // 표 1: Document.Folder.Self.Path는 파일 시스템 경로를 그대로, 가상 폴더는 ::{GUID}로 준다.
+            object self = Get(Get(Get(_browser, "Document"), "Folder"), "Self");
+            string path = Get(self, "Path") as string;
+            Log("{0} 폴더 {1}", why, path);
+            if (string.IsNullOrEmpty(path) || path.StartsWith("::")) return;
+            _session.Send("c" + path);
+        }
+
+        static object Get(object o, string name)
+        {
+            return o.GetType().InvokeMember(name, BindingFlags.GetProperty, null, o, null);
         }
 
         public int GetSite(ref Guid riid, out IntPtr ppvSite)
@@ -240,11 +277,22 @@ namespace Sill.Band
 
         void DestroyView()
         {
+            if (_events != null) { Safe("Unadvise", () => _events.Unadvise(_cookie)); _events = null; }
+            _browser = null;
             if (_session != null) { _session.Dispose(); _session = null; }
             if (_web != null) { _web.Close(); _web = null; }
             if (_view == null) return;
             _view.Dispose();
             _view = null;
         }
+    }
+
+    // 탐색기가 IDispatch::Invoke로 부르는 이벤트 수신 객체. 등록하지 않고 연결점에 직접 넘기므로 CLSID가 없다.
+    [ComVisible(true), ClassInterface(ClassInterfaceType.None)]
+    public sealed class BrowserEvents : DWebBrowserEvents2
+    {
+        readonly Action _navigated;
+        public BrowserEvents(Action navigated) { _navigated = navigated; }
+        public void NavigateComplete2(object pDisp, ref object URL) { _navigated(); }
     }
 }

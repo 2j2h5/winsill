@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 진행 방식
 
-milepost로 진행한다. 상태는 `docs/reports/state.json`에 있고, 프로포절·마일스톤 설계·결과 보고서는 `docs/reports/sill/`에 있다. 설계 결정의 근거는 이 보고서들과 `PROPOSAL.md`다.
+milepost로 진행한다. 상태는 `milepost/state.json`에 있고, 프로포절·마일스톤 설계·결과 보고서는 `milepost/html/sill/`(PDF는 `milepost/pdf/sill/`)에 있다. 설계 결정의 근거는 이 보고서들과 `PROPOSAL.md`다.
 
 ## 명령
 

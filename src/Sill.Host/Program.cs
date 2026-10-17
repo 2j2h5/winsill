@@ -68,7 +68,7 @@ namespace Sill.Host
             }
         }
 
-        // ConPTY 출력(UTF-8)을 글자 경계에서 끊어 o 메시지로 보낸다.
+        // ConPTY 출력(UTF-8)을 글자 경계에서 끊어 o 메시지로 보낸다. 셸이 사용자의 명령으로 폴더를 옮겼으면 p도 보낸다.
         static void Pump(Pty pty, PipeStream pipe, Sync sync)
         {
             try
@@ -82,8 +82,13 @@ namespace Sill.Host
                     int c = decoder.GetChars(buf, 0, n, chars, 0);
                     if (c == 0) continue;
                     var text = new string(chars, 0, c);
-                    sync.Output(text);
+                    string moved = sync.Output(text);
                     Shared.Write(pipe, "o" + text);
+                    if (moved == null) continue;
+                    // 없는 경로로 이동하면 탐색기가 오류 창을 띄운다(M2 결과 3.3절).
+                    if (!Directory.Exists(moved)) { Log("p 건너뜀(폴더 아님) {0}", moved); continue; }
+                    Shared.Write(pipe, "p" + moved);
+                    Log("p 보냄 {0}", moved);
                 }
             }
             catch (Exception e) { Log("출력 중단: {0}", e.Message); }

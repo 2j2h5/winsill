@@ -147,7 +147,28 @@ namespace Sill.Band
 
         void ToPage(string m)
         {
-            if (_web != null) _web.CoreWebView2.PostWebMessageAsString(m);
+            if (m.StartsWith("p")) Safe("셸 폴더", () => Navigate(m.Substring(1)));
+            else if (_web != null) _web.CoreWebView2.PostWebMessageAsString(m);
+        }
+
+        // --- 터미널 → 탐색기 (M3 설계 3.4절): sill-host가 정한 폴더로 이동만 한다. 돌아오는 c는 sill-host가 버린다. ---
+
+        // Navigate2는 새 보기에 포커스를 줘서 사용자가 패널에 이어 치는 키가 파일 목록으로 간다(M3 결과).
+        // BrowseObject는 SBSP_ACTIVATE_NOFOCUS로 포커스를 패널에 그대로 둔다(M3 설계 표 4의 대안).
+        void Navigate(string path)
+        {
+            const uint SBSP_SAMEBROWSER = 0x1, SBSP_ABSOLUTE = 0x0, SBSP_ACTIVATE_NOFOCUS = 0x80000;
+            Log("셸 폴더 {0}", path);
+            var sidTopLevelBrowser = new Guid("4C96BE40-915C-11CF-99D3-00AA004AE837");
+            var iid = typeof(IShellBrowser).GUID;
+            object sb;
+            int hr = ((IServiceProvider)_site).QueryService(ref sidTopLevelBrowser, ref iid, out sb);
+            if (hr != Native.S_OK) { Log("IShellBrowser 없음 hr=0x{0:X8}", hr); return; }
+            IntPtr pidl = Native.ILCreateFromPathW(path);
+            if (pidl == IntPtr.Zero) { Log("PIDL 실패 {0}", path); return; }
+            try { hr = ((IShellBrowser)sb).BrowseObject(pidl, SBSP_SAMEBROWSER | SBSP_ABSOLUTE | SBSP_ACTIVATE_NOFOCUS); }
+            finally { Native.ILFree(pidl); }
+            if (hr != Native.S_OK) Log("BrowseObject hr=0x{0:X8}", hr);
         }
 
         // --- 탐색기 → 터미널 (M2 설계 3.2절): 폴더가 바뀌면 경로만 sill-host에 보낸다. cd를 넣을지는 sill-host가 정한다. ---

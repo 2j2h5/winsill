@@ -93,6 +93,23 @@ namespace Sill.Band
         [PreserveSig] int QueryService(ref Guid guidService, ref Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object ppvObject);
     }
 
+    // 탐색기 창(탭)의 셸 브라우저 (shobjidl_core.h). BrowseObject까지만 순서대로 선언하고 뒤의 메서드는 부르지 않는다.
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("000214E2-0000-0000-C000-000000000046")]
+    public interface IShellBrowser
+    {
+        // IOleWindow
+        [PreserveSig] int GetWindow(out IntPtr phwnd);
+        [PreserveSig] int ContextSensitiveHelp(bool fEnterMode);
+        // IShellBrowser
+        [PreserveSig] int InsertMenusSB(IntPtr hmenuShared, IntPtr lpMenuWidths);
+        [PreserveSig] int SetMenuSB(IntPtr hmenuShared, IntPtr holemenuRes, IntPtr hwndActiveObject);
+        [PreserveSig] int RemoveMenusSB(IntPtr hmenuShared);
+        [PreserveSig] int SetStatusTextSB([MarshalAs(UnmanagedType.LPWStr)] string pszStatusText);
+        [PreserveSig] int EnableModelessSB(bool fEnable);
+        [PreserveSig] int TranslateAcceleratorSB(ref MSG pmsg, ushort wID);
+        [PreserveSig] int BrowseObject(IntPtr pidl, uint wFlags);
+    }
+
     // 탐색기 창(탭)의 이벤트 (exdisp.h). 쓰는 것만 선언한다. 나머지 DISPID는 CLR이 DISP_E_MEMBERNOTFOUND로 돌려준다.
     [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIDispatch), Guid("34A715A0-6587-11D0-924A-0020AFC7AC4D")]
     public interface DWebBrowserEvents2
@@ -107,6 +124,8 @@ namespace Sill.Band
         [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
         [DllImport("user32.dll")] public static extern IntPtr GetFocus();
         [DllImport("user32.dll")] public static extern bool IsChild(IntPtr hWndParent, IntPtr hWnd);
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr ILCreateFromPathW(string pszPath);
+        [DllImport("shell32.dll")] public static extern void ILFree(IntPtr pidl);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
     }
 }

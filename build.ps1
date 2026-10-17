@@ -44,7 +44,7 @@ $core = "$wv2\lib\net462\Microsoft.Web.WebView2.Core.dll"
     (Get-ChildItem "$root\src\Sill.Band\*.cs").FullName "$root\src\Shared.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & $csc /nologo /codepage:65001 /target:winexe /platform:x64 /optimize `
-    /out:"$out\sill-host.exe" `
+    /out:"$out\sill-host.exe" /r:System.Web.Extensions.dll `
     (Get-ChildItem "$root\src\Sill.Host\*.cs").FullName "$root\src\Shared.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 

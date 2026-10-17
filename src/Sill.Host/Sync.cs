@@ -9,18 +9,9 @@ namespace Sill.Host
     // 탐색기 → 터미널 동기화(M2 설계 3.3–3.4절). 셸 출력의 OSC 133/9;9와 사용자 입력으로 셸 상태를 보고,
     // 프롬프트에서 기다리는 중(Idle)일 때만 cd를 넣는다. 출력 스레드와 파이프 스레드가 함께 부르므로 lock 안에서만 상태를 바꾼다.
     // 터미널 → 탐색기(M3 설계 3.2–3.3절): 사용자의 명령으로 바뀐 폴더를 Output이 돌려주고, 그 경로를 되먹임 목록에 넣는다.
+    // 셸마다 다른 cd 형식은 Shells.cs의 셸 표가 준다(M4 설계 3.3절).
     sealed class Sync
     {
-        // 프로필 적재 뒤 prompt 함수를 감싼다. -EncodedCommand로 넘기므로 실행 정책에 걸리지 않는다.
-        public const string Integration = @"
-$global:__sill_prompt = $function:prompt
-function global:prompt {
-  $e = [char]27; $p = $executionContext.SessionState.Path.CurrentLocation
-  $s = ""$e]133;A$e\""
-  if ($p.Provider.Name -eq 'FileSystem') { $s += ""$e]9;9;$($p.ProviderPath)$e\"" }
-  $s + (& $global:__sill_prompt) + ""$e]133;B$e\""
-}";
-
         const int Busy = 0, Idle = 1, Typing = 2;
         // xterm.js가 사용자 입력 없이 보내는 응답: 커서 위치, 장치 속성, 포커스 보고
         static readonly Regex Report = new Regex(@"^\x1b\[(\d+;\d+R|\?[\d;]*c|[IO])$");
@@ -28,6 +19,7 @@ function global:prompt {
         readonly object _lock = new object();
         public string StartDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         Pty _pty;
+        Func<string, string> _cd;
         int _state = Busy;      // 프로필 적재 중에는 실행 중으로 본다
         bool _ownCd;            // 실행 중인 것이 Sill이 넣은 cd
         string _pending;        // _ownCd 동안 받은 마지막 폴더
@@ -39,7 +31,7 @@ function global:prompt {
 
         static void Log(string format, params object[] args) { Shared.Log("host.log", format, args); }
 
-        public void Started(Pty pty) { lock (_lock) _pty = pty; }
+        public void Started(Pty pty, Func<string, string> cd) { lock (_lock) { _pty = pty; _cd = cd; } }
 
         public void Folder(string path)
         {
@@ -65,7 +57,8 @@ function global:prompt {
         {
             lock (_lock)
             {
-                if (data.IndexOf('\r') >= 0) { _state = Busy; _ownCd = false; _pending = null; }
+                // Ctrl+C도 줄을 끝낸다. 입력 중에 누르면 셸이 줄을 버리고 새 프롬프트를 낸다.
+                if (data.IndexOf('\r') >= 0 || data.IndexOf('\x03') >= 0) { _state = Busy; _ownCd = false; _pending = null; }
                 else if (_state == Idle && !Report.IsMatch(data)) _state = Typing;
             }
         }
@@ -104,6 +97,8 @@ function global:prompt {
             else if (s.StartsWith("133;C")) _state = Busy;
             else if (s == "133;B")
             {
+                // Ctrl+L은 입력 줄을 둔 채 프롬프트를 다시 그린다(PSReadLine은 prompt를 다시 부르고, bash는 PS1만 다시 낸다). 입력 중이면 그대로 둔다(M4).
+                if (_state == Typing) { Log("입력 중 유지(프롬프트 다시 그림)"); return; }
                 _state = Idle;
                 string next = _ownCd ? _pending : null;
                 _ownCd = false;
@@ -119,8 +114,9 @@ function global:prompt {
 
         void Cd(string path)
         {
-            // PowerShell은 유니코드 작은따옴표(‘ ’ ‚ ‛)도 작은따옴표로 읽으므로 모두 두 번 쓴다.
-            _pty.Write("cd -LiteralPath '" + Regex.Replace(path, "['‘’‚‛]", "$0$0") + "'\r");
+            string line = _cd == null ? null : _cd(path);
+            if (line == null) { Log("c 건너뜀(셸이 못 감) {0}", path); return; }
+            _pty.Write(line);
             _state = Busy;
             _ownCd = true;
             Log("cd 보냄 {0}", path);

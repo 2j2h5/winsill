@@ -7,7 +7,7 @@ using System.Text;
 namespace Sill
 {
     // band와 sill-host가 함께 쓰는 코드. 파이프는 메시지 모드라서 Write 한 번이 메시지 하나로 도착한다.
-    // 메시지는 UTF-8 문자열이고 첫 글자가 종류다: r(크기) i(입력) o(출력). M1 설계 표 2.
+    // 메시지는 UTF-8 문자열이고 첫 글자가 종류다: r(크기) i(입력) o(출력) c(탐색기 폴더). M1 설계 표 2, M2 설계 표 2.
     static class Shared
     {
         public static string Read(PipeStream pipe)

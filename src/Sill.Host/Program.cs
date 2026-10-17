@@ -36,11 +36,13 @@ namespace Sill.Host
                 pipe.EndWaitForConnection(wait);
 
                 Pty pty = null;
+                var sync = new Sync();
                 string m;
                 while ((m = Shared.Read(pipe)) != null)
                 {
                     if (m.Length == 0) continue;
-                    if (m[0] == 'i' && pty != null) pty.Write(m.Substring(1));
+                    if (m[0] == 'i' && pty != null) { sync.Input(m.Substring(1)); pty.Write(m.Substring(1)); }
+                    else if (m[0] == 'c') sync.Folder(m.Substring(1));
                     else if (m[0] == 'r')
                     {
                         var size = m.Substring(1).Split(',');
@@ -48,10 +50,12 @@ namespace Sill.Host
                         if (pty != null) { pty.Resize(cols, rows); continue; }
 
                         string shell = Shell();
-                        pty = Pty.Start(shell, cols, rows, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
-                        Log("셸 시작 {0} pid={1} {2}x{3}", shell, pty.Process.Id, cols, rows);
+                        pty = Pty.Start(shell + " -NoLogo -NoExit -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(Sync.Integration)),
+                            cols, rows, sync.StartDir);
+                        Log("셸 시작 {0} pid={1} {2}x{3} {4}", shell, pty.Process.Id, cols, rows, sync.StartDir);
+                        sync.Started(pty);
                         var started = pty;
-                        new Thread(() => Pump(started, pipe)) { IsBackground = true }.Start();
+                        new Thread(() => Pump(started, pipe, sync)) { IsBackground = true }.Start();
                         new Thread(() =>
                         {
                             started.Process.WaitForExit();
@@ -65,7 +69,7 @@ namespace Sill.Host
         }
 
         // ConPTY 출력(UTF-8)을 글자 경계에서 끊어 o 메시지로 보낸다.
-        static void Pump(Pty pty, PipeStream pipe)
+        static void Pump(Pty pty, PipeStream pipe, Sync sync)
         {
             try
             {
@@ -76,7 +80,10 @@ namespace Sill.Host
                 while ((n = pty.Output.Read(buf, 0, buf.Length)) > 0)
                 {
                     int c = decoder.GetChars(buf, 0, n, chars, 0);
-                    if (c > 0) Shared.Write(pipe, "o" + new string(chars, 0, c));
+                    if (c == 0) continue;
+                    var text = new string(chars, 0, c);
+                    sync.Output(text);
+                    Shared.Write(pipe, "o" + text);
                 }
             }
             catch (Exception e) { Log("출력 중단: {0}", e.Message); }
@@ -86,10 +93,10 @@ namespace Sill.Host
         {
             foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
             {
-                try { if (dir.Length > 0 && File.Exists(Path.Combine(dir, "pwsh.exe"))) return "pwsh.exe -NoLogo"; }
+                try { if (dir.Length > 0 && File.Exists(Path.Combine(dir, "pwsh.exe"))) return "pwsh.exe"; }
                 catch (ArgumentException) { }
             }
-            return "powershell.exe -NoLogo";
+            return "powershell.exe";
         }
 
         static void KillChildrenOnExit()

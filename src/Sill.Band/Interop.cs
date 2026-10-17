@@ -87,6 +87,19 @@ namespace Sill.Band
         [PreserveSig] int OnFocusChangeIS([MarshalAs(UnmanagedType.IUnknown)] object punkObj, bool fSetFocus);
     }
 
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("6D5140C1-7436-11CE-8034-00AA006009FA")]
+    public interface IServiceProvider
+    {
+        [PreserveSig] int QueryService(ref Guid guidService, ref Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object ppvObject);
+    }
+
+    // 탐색기 창(탭)의 이벤트 (exdisp.h). 쓰는 것만 선언한다. 나머지 DISPID는 CLR이 DISP_E_MEMBERNOTFOUND로 돌려준다.
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIDispatch), Guid("34A715A0-6587-11D0-924A-0020AFC7AC4D")]
+    public interface DWebBrowserEvents2
+    {
+        [DispId(252)] void NavigateComplete2([MarshalAs(UnmanagedType.IDispatch)] object pDisp, [In] ref object URL);
+    }
+
     internal static class Native
     {
         public const int S_OK = 0, S_FALSE = 1, E_NOTIMPL = unchecked((int)0x80004001), E_FAIL = unchecked((int)0x80004005);

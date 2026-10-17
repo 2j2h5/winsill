@@ -71,7 +71,13 @@ namespace Sill.Host
                         if (pty != null)
                         {
                             // 같은 크기는 새 페이지(WebView2 복구)뿐이다. ConPTY는 크기가 바뀌면 화면을 다시 보내므로 한 칸 바꿨다 되돌린다(M6 설계 3.3절).
-                            if (c == cols && r == rows) { Log("다시 그리기"); pty.Resize((short)(c - 1), r); }
+                            // 화면과 달리 창 제목은 다시 오지 않으므로 마지막 제목을 먼저 보낸다(M7).
+                            if (c == cols && r == rows)
+                            {
+                                Log("다시 그리기");
+                                if (sync.Title != null) Shared.Write(pipe, "o\x1b]0;" + sync.Title + "\x07");
+                                pty.Resize((short)(c - 1), r);
+                            }
                             pty.Resize(c, r);
                             cols = c; rows = r;
                             continue;
@@ -84,7 +90,7 @@ namespace Sill.Host
                         if (shell == null) { pipe.WaitForPipeDrain(); return; }   // 안내 줄을 band가 읽은 뒤에 닫는다
                         string dir = sync.StartDir;
                         if (shell.Cd != null && shell.Cd(dir) == null) dir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                        try { pty = Pty.Start(shell.CommandLine, cols, rows, dir); }
+                        try { pty = Pty.Start(shell.CommandLine, shell.Title, cols, rows, dir); }
                         catch (Win32Exception e) { notice("Cannot start the shell: " + shell.Name + " (" + e.Message + ")"); pipe.WaitForPipeDrain(); return; }
                         Log("셸 시작 {0} pid={1} {2}x{3} {4}", shell.Name, pty.Process.Id, cols, rows, dir);
                         sync.Started(pty, shell.Cd, KeyFile);
@@ -177,7 +183,7 @@ namespace Sill.Host
 
         public int ExitCode { get { uint code; Native.GetExitCodeProcess(_process, out code); return (int)code; } }
 
-        public static Pty Start(string commandLine, short cols, short rows, string dir)
+        public static Pty Start(string commandLine, string title, short cols, short rows, string dir)
         {
             SafeFileHandle inRead, inWrite, outRead, outWrite;
             if (!Native.CreatePipe(out inRead, out inWrite, IntPtr.Zero, 0)) throw new Win32Exception();
@@ -194,6 +200,8 @@ namespace Sill.Host
             var si = new Native.STARTUPINFOEX();
             si.StartupInfo.cb = Marshal.SizeOf(si);
             si.lpAttributeList = Marshal.AllocHGlobal(listSize);
+            // ConPTY는 셸이 제목을 정하기 전에 시작 제목을 OSC 0으로 보낸다. 없으면 실행 파일의 전체 경로다(M7 설계 표 6).
+            si.StartupInfo.lpTitle = Marshal.StringToHGlobalUni(title);
             try
             {
                 if (!Native.InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, ref listSize)
@@ -212,6 +220,7 @@ namespace Sill.Host
             {
                 Native.DeleteProcThreadAttributeList(si.lpAttributeList);
                 Marshal.FreeHGlobal(si.lpAttributeList);
+                Marshal.FreeHGlobal(si.StartupInfo.lpTitle);
             }
             // 의사 콘솔이 복제해 가졌으므로 이쪽 끝은 닫는다.
             inRead.Dispose();

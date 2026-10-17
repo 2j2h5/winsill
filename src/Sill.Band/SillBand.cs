@@ -36,6 +36,7 @@ namespace Sill.Band
         object _browser;                    // 이 탭의 IWebBrowser2
         ComTypes.IConnectionPoint _events;
         int _cookie;
+        IntPtr _bar;                        // 서브클래싱한 탐색기의 BaseBar 창
 
         static void Log(string format, params object[] args) { Shared.Log("band.log", format, args); }
 
@@ -74,7 +75,8 @@ namespace Sill.Band
 
                 // 문서 요구: 보이지 않는 자식 창으로 만든다. 표시는 ShowDW에서 한다.
                 // 이 창은 자리만 차지하고, 화면은 그 위에 붙는 WebView2(msedgewebview2.exe)가 그린다.
-                var view = new View { BackColor = Color.FromArgb(30, 30, 30), Visible = false, Text = "Sill" };
+                Theme.Read();
+                var view = new View { BackColor = Theme.Content, Visible = false, Text = "Sill" };
                 view.Key += action => Safe("Sill.Key", () => OnKey(action));
                 view.GotFocus += (s, e) => Safe("GotFocus", () => { if (_web != null) _web.MoveFocus(CoreWebView2MoveFocusReason.Programmatic); });
                 view.Resize += (s, e) => Safe("Resize", () => { if (_web != null) _web.Bounds = view.ClientRectangle; });
@@ -162,6 +164,8 @@ namespace Sill.Band
                 string m = e.TryGetWebMessageAsString();
                 // 세션이 끝난 뒤 페이지에서 키를 누르면 새 sill-host로 다시 시작한다.
                 if (m == "n") Restart("다시 시작");
+                else if (m == "h") { Log("닫기 버튼"); ClosePanel(); }
+                else if (m == "t") ApplyTheme();
                 else _session.Send(m);
             });
         }
@@ -195,13 +199,84 @@ namespace Sill.Band
             }
             else if (action == KeyToggle && focused)
             {
-                FocusFileList();
-                // 창 메시지 처리 중에 바를 닫지 않고 메시지 루프로 미룬다.
-                _view.BeginInvoke(new Action(() => Safe("패널 닫기", () =>
-                    _browser.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, _browser, new object[] { "{" + Clsid + "}", false, null }))));
+                ClosePanel();
                 return;
             }
             _view.Focus();
+        }
+
+        // Ctrl+`와 탭 줄의 ×(M7 설계 3.3절). 포커스를 파일 목록에 두고 닫는다. 세션은 band 수명이라 그대로다.
+        void ClosePanel()
+        {
+            FocusFileList();
+            // 창 메시지 처리 중에 바를 닫지 않고 메시지 루프로 미룬다.
+            _view.BeginInvoke(new Action(() => Safe("패널 닫기", () =>
+                _browser.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, _browser, new object[] { "{" + Clsid + "}", false, null }))));
+        }
+
+        // --- 탐색기가 그리는 모양(M7 설계 3.1·3.2·3.5절) ---
+
+        // 탐색기의 왼쪽 띠 머리(제목, ×)를 없애고, 위쪽 분할선을 칠하도록 BaseBar를 서브클래싱한다. 보일 때마다 부른다.
+        void Restyle()
+        {
+            const uint BSIM_STYLE = 0x2, BSIS_NOCAPTION = 0x40;
+            var site = _site as IBandSite;
+            var info = new BANDSITEINFO { dwMask = BSIM_STYLE };
+            if (site != null && site.GetBandSiteInfo(ref info) == Native.S_OK && (info.dwStyle & BSIS_NOCAPTION) == 0)
+            {
+                info.dwStyle |= BSIS_NOCAPTION;
+                Log("사이트 스타일 0x{0:X} hr=0x{1:X8}", info.dwStyle, site.SetBandSiteInfo(ref info));
+            }
+            _view.CaptionOff = true;
+            IntPtr bar = Native.GetParent(Native.GetParent(_view.Handle));
+            if (bar == _bar) return;
+            if (_bar != IntPtr.Zero) Native.RemoveWindowSubclass(_bar, BarProc, UIntPtr.Zero);
+            _bar = Native.SetWindowSubclass(bar, BarProc, UIntPtr.Zero, UIntPtr.Zero) ? bar : IntPtr.Zero;
+            Log("BaseBar 0x{0:X} 서브클래스 {1}", bar.ToInt64(), _bar != IntPtr.Zero);
+            if (_bar != IntPtr.Zero) Native.InvalidateRect(_bar, IntPtr.Zero, true);
+        }
+
+        void ApplyTheme()
+        {
+            Theme.Read();
+            Log("앱 모드 {0}", Theme.Light ? "라이트" : "다크");
+            _view.BackColor = Theme.Content;
+            if (_web != null) _web.DefaultBackgroundColor = Theme.Content;
+            if (_bar != IntPtr.Zero) Native.InvalidateRect(_bar, IntPtr.Zero, true);
+        }
+
+        // 분할선은 BaseBar 창 클래스의 바탕 브러시(COLOR_3DFACE, 다크 모드에서도 #F0F0F0)가 칠한다(M7 설계 2.2절).
+        // 바탕을 지울 때 rebar가 덮지 않은 위쪽을 탐색기의 세로 분할선처럼 칠한다. 마우스 처리(끌어서 높이 바꾸기)는 그대로 둔다.
+        static readonly Native.SubclassProc BarProc = OnBaseBar;    // 대리자가 수집되지 않게 붙들어 둔다
+
+        static IntPtr OnBaseBar(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, UIntPtr id, UIntPtr data)
+        {
+            const uint WM_ERASEBKGND = 0x14, WM_NCDESTROY = 0x82;
+            try
+            {
+                if (msg == WM_ERASEBKGND)
+                {
+                    RECT bar, rebar;
+                    Native.GetWindowRect(hwnd, out bar);
+                    Native.GetWindowRect(Native.FindWindowEx(hwnd, IntPtr.Zero, "ReBarWindow32", null), out rebar);
+                    int width = bar.right - bar.left, top = rebar.top - bar.top;
+                    using (var g = Graphics.FromHdc(wParam))
+                    using (var frame = new SolidBrush(Theme.Frame))
+                    using (var line = new SolidBrush(Theme.Line))
+                    {
+                        g.FillRectangle(frame, 0, 0, width, top);
+                        g.FillRectangle(line, 0, 1, width, 1);
+                    }
+                    return (IntPtr)1;
+                }
+                if (msg == WM_NCDESTROY) Native.RemoveWindowSubclass(hwnd, BarProc, id);
+            }
+            catch (Exception e)
+            {
+                Log("BaseBar 예외, 서브클래스 뗌: {0}", e);
+                Native.RemoveWindowSubclass(hwnd, BarProc, id);
+            }
+            return Native.DefSubclassProc(hwnd, msg, wParam, lParam);
         }
 
         // WebView2의 GotFocus는 페이지 안에서 준 포커스에는 오지 않는다. 포커스 창은 msedgewebview2 스레드에 있으므로
@@ -311,6 +386,7 @@ namespace Sill.Band
             return Guard("ShowDW", () =>
             {
                 Log("ShowDW({0})", fShow);
+                if (_view != null && fShow) Safe("탐색기 모양", Restyle);
                 if (_view != null) _view.Visible = fShow;
                 if (_web != null) _web.IsVisible = fShow;
                 return Native.S_OK;
@@ -388,6 +464,7 @@ namespace Sill.Band
             _browser = null;
             if (_session != null) { _session.Dispose(); _session = null; }
             if (_web != null) { _web.Close(); _web = null; }
+            if (_bar != IntPtr.Zero) { Native.RemoveWindowSubclass(_bar, BarProc, UIntPtr.Zero); _bar = IntPtr.Zero; }
             if (_view == null) return;
             _view.Dispose();
             _view = null;
@@ -400,10 +477,56 @@ namespace Sill.Band
         static readonly uint KeyMessage = Native.RegisterWindowMessage("Sill.Key");
         public event Action<int> Key;
 
+        public bool CaptionOff;             // BSIS_NOCAPTION을 적용한 뒤. 그 전의 첫 배치에는 띠 머리가 있다
+        bool _captionLogged;
+
         protected override void WndProc(ref Message m)
         {
+            const int WM_WINDOWPOSCHANGING = 0x46;
             if (m.Msg == (int)KeyMessage && Key != null) { Key(m.WParam.ToInt32()); return; }
+            if (m.Msg == WM_WINDOWPOSCHANGING) Place(m.LParam);
             base.WndProc(ref m);
+        }
+
+        // M7 설계 3.1절: rebar는 띠 머리가 없어도 band 창을 x = 2에 두고, BaseBar보다 4 px 넓게 잡는다.
+        // band 창이 rebar 왼쪽 끝부터 BaseBar 오른쪽 끝까지 덮게 고친다. 띠 머리가 남았으면(BSIS_NOCAPTION이 안 들음) × 도구 모음을 숨기고 덮는다(QTTabBar의 방법).
+        void Place(IntPtr lParam)
+        {
+            const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2;
+            var p = (WINDOWPOS)Marshal.PtrToStructure(lParam, typeof(WINDOWPOS));
+            IntPtr rebar = Native.GetParent(Handle);
+            RECT bar;
+            if (!Native.GetClientRect(Native.GetParent(rebar), out bar)) return;
+            if ((p.flags & SWP_NOMOVE) == 0 && p.x > 0)
+            {
+                if (p.x > 4 && CaptionOff && !_captionLogged)
+                {
+                    _captionLogged = true;
+                    Shared.Log("band.log", "띠 머리 남음 x={0}, × 숨김", p.x);
+                    Native.ShowWindow(Native.FindWindowEx(rebar, IntPtr.Zero, "ToolbarWindow32", null), 0);
+                }
+                if ((p.flags & SWP_NOSIZE) != 0) { p.cx = Width; p.flags &= ~SWP_NOSIZE; }
+                p.cx += p.x;
+                p.x = 0;
+            }
+            if ((p.flags & SWP_NOSIZE) == 0) p.cx = Math.Min(p.cx, bar.right - ((p.flags & SWP_NOMOVE) == 0 ? p.x : Left));
+            Marshal.StructureToPtr(p, lParam, false);
+        }
+    }
+
+    // 탐색기와 같은 색(M7 설계 표 4). 탐색기는 Windows의 앱 모드(AppsUseLightTheme)를 따른다.
+    // band 창은 자식 창이라 모드 변경(WM_SETTINGCHANGE)을 받지 않으므로, 시작할 때와 페이지의 t를 받았을 때 읽는다.
+    static class Theme
+    {
+        public static bool Light;
+        public static Color Content { get { return Light ? Color.FromArgb(0xFF, 0xFF, 0xFF) : Color.FromArgb(0x19, 0x19, 0x19); } }   // 파일 목록, 터미널
+        public static Color Frame { get { return Light ? Color.FromArgb(0xE8, 0xE8, 0xE8) : Color.FromArgb(0x20, 0x20, 0x20); } }     // 창 틀, 탭 줄
+        public static Color Line { get { return Light ? Color.FromArgb(0xF7, 0xF7, 0xF7) : Color.FromArgb(0x2B, 0x2B, 0x2B); } }      // 세로 분할선 가운데
+
+        public static void Read()
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
+                Light = k != null && k.GetValue("AppsUseLightTheme") is int && (int)k.GetValue("AppsUseLightTheme") != 0;
         }
     }
 

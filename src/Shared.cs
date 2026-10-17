@@ -8,6 +8,7 @@ namespace Sill
 {
     // band와 sill-host가 함께 쓰는 코드. 파이프는 메시지 모드라서 Write 한 번이 메시지 하나로 도착한다.
     // 메시지는 UTF-8 문자열이고 첫 글자가 종류다: r(크기) i(입력) o(출력) c(탐색기 폴더) p(셸 폴더). M1·M2·M3 설계 표 2.
+    // 페이지와 band 사이에만 오가는 것: s(설정 파일) x(끊김) n(다시 시작) h(패널 닫기) t(앱 모드). M6 설계 표 6, M7 설계 표 7.
     static class Shared
     {
         public static string Read(PipeStream pipe)

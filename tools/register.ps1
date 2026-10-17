@@ -38,6 +38,7 @@ Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sil
 $menu = 'HKCU:\Software\Classes\Directory\Background\shell\Sill'
 New-Item $menu -Force | Out-Null
 Set-ItemProperty $menu -Name MUIVerb -Value 'Open in Sill'
+Set-ItemProperty $menu -Name Icon -Value "`"$hostExe`",0"    # sill-host.exe에 넣은 assets\sill.ico(M7 설계 3.6절)
 New-Item "$menu\command" -Value "`"$hostExe`" open `"%V`"" -Force | Out-Null
 Start-Process $hostExe keys
 "registered $clsid -> $dll"

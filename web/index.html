@@ -4,23 +4,70 @@
 <meta charset="utf-8">
 <link rel="stylesheet" href="xterm.css">
 <style>
-  html, body { margin: 0; height: 100%; background: #1e1e1e; overflow: hidden; }
-  #t { position: absolute; inset: 2px 0 0 6px; }
+  /* 탐색기와 같은 색(M7 설계 표 4·5). 라이트 값은 band의 Theme과 같다. */
+  :root { --strip: #202020; --bg: #191919; --text: #ffffff; --hover: rgba(255, 255, 255, 0.06); }
+  @media (prefers-color-scheme: light) {
+    :root { --strip: #e8e8e8; --bg: #ffffff; --text: #1a1a1a; --hover: rgba(0, 0, 0, 0.04); }
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+  /* 탭 줄: 탐색기 위쪽 탭과 같은 치수(WinUI TabView). 선택된 탭은 터미널과 같은 바탕이라 터미널로 이어진다. */
+  #strip { position: absolute; inset: 0 0 auto 0; height: 36px; background: var(--strip); display: flex; align-items: flex-end;
+           font: 12px "Segoe UI Variable Text", "Segoe UI", sans-serif; color: var(--text); user-select: none; }
+  #tab { margin-left: 8px; height: 32px; min-width: 120px; max-width: 240px; box-sizing: border-box; padding: 0 12px;
+         background: var(--bg); border-radius: 8px 8px 0 0; display: flex; align-items: center; }
+  #title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #close { margin: 0 4px 2px auto; width: 40px; height: 32px; border: 0; border-radius: 4px; background: none; color: var(--text);
+           font: 10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; }
+  #close:hover { background: var(--hover); }
+  #t { position: absolute; inset: 38px 0 0 6px; }
 </style>
 </head>
 <body>
+<div id="strip"><div id="tab"><span id="title"></span></div><button id="close" title="Close (Ctrl+`)">&#xE8BB;</button></div>
 <div id="t"></div>
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
 <script>
 // 화면과 입력만 맡는다. 메시지는 band를 거쳐 sill-host로 간다: r(크기) i(입력) s(설정 파일) / o(출력) x(세션 끝남) n(다시 시작). M1 설계 표 2, M6 설계 표 6.
+// band가 직접 받는 것: h(패널 닫기) t(앱 모드가 바뀜). M7 설계 표 7.
 const host = window.chrome.webview;
+
+// 터미널 색표: 바탕은 탐색기의 내용 영역, ANSI 16색은 VS Code의 다크·라이트 기본값(M7 설계 표 8).
+const themes = {
+  dark: {
+    background: '#191919', foreground: '#cccccc', cursor: '#cccccc', selectionBackground: '#264f78',
+    black: '#000000', red: '#cd3131', green: '#0dbc79', yellow: '#e5e510', blue: '#2472c8', magenta: '#bc3fbc', cyan: '#11a8cd', white: '#e5e5e5',
+    brightBlack: '#666666', brightRed: '#f14c4c', brightGreen: '#23d18b', brightYellow: '#f5f543', brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#e5e5e5',
+  },
+  light: {
+    background: '#ffffff', foreground: '#3b3b3b', cursor: '#3b3b3b', selectionBackground: '#add6ff',
+    black: '#000000', red: '#cd3131', green: '#107c10', yellow: '#949800', blue: '#0451a5', magenta: '#bc05bc', cyan: '#0598bc', white: '#555555',
+    brightBlack: '#666666', brightRed: '#f14c4c', brightGreen: '#14ce14', brightYellow: '#b5ba00', brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#a5a5a5',
+  },
+};
+const lightMode = matchMedia('(prefers-color-scheme: light)');
 const term = new Terminal({
   fontFamily: '"Cascadia Mono", Consolas, monospace',
   fontSize: 13,
   cursorBlink: true,
-  theme: { background: '#1e1e1e' },
+  theme: themes[lightMode.matches ? 'light' : 'dark'],
+  minimumContrastRatio: 4.5,    // 흰 바탕의 PSReadLine 노란 명령어 등, 대비가 낮은 글자만 진하게(VS Code 기본값)
 });
+// WebView2는 Windows 앱 모드를 prefers-color-scheme으로 준다. band는 모드 변경을 받지 못하므로 t로 알린다.
+const applyTheme = () => { term.options.theme = themes[lightMode.matches ? 'light' : 'dark']; host.postMessage('t'); };
+lightMode.addEventListener('change', applyTheme);
+
+// 탭 제목은 Windows Terminal처럼 프로그램이 보낸 제목(OSC 0·2)이다. 첫 제목은 sill-host가 준 셸 이름이고(M7 설계 3.4절),
+// 프로그램이 제목을 지우면 셸 이름으로 돌아간다. cmd는 첫 제목부터 "cmd - prompt …"처럼 실행 중인 명령을 붙이므로 뗀다.
+const titleEl = document.getElementById('title');
+let shellName = '';
+term.onTitleChange(t => {
+  if (!shellName) shellName = t.replace(/ - .*$/, '');
+  titleEl.textContent = titleEl.title = t || shellName;
+});
+document.getElementById('close').onclick = () => host.postMessage('h');
+// 탭 줄을 눌러도 포커스는 터미널에 둔다.
+document.getElementById('strip').addEventListener('mousedown', e => { e.preventDefault(); term.focus(); });
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
 term.open(document.getElementById('t'));
@@ -37,6 +84,7 @@ term.onData(d => {
   if (ended) {
     ended = false;
     term.reset();
+    shellName = '';
     host.postMessage('n');
     newCommand = true;
     sentSize = '';    // 새 세션은 크기를 받아야 셸을 시작한다
@@ -54,6 +102,7 @@ host.addEventListener('message', e => {
     // band가 새 세션을 시작했다(Ctrl+Shift+`). 새 셸이 크기를 받아야 시작한다.
     ended = false;
     term.reset();
+    shellName = '';
     newCommand = true;
     sentSize = '';
     sendSize();
@@ -112,6 +161,7 @@ term.attachCustomKeyEventHandler(e => {
 new ResizeObserver(() => fit.fit()).observe(document.body);
 fit.fit();
 sendSize();
+applyTheme();
 term.focus();
 </script>
 </body>

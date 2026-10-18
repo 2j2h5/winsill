@@ -26,7 +26,7 @@ $approved = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Ap
 if (-not (Test-Path $approved)) { New-Item $approved | Out-Null }
 Set-ItemProperty $approved -Name $clsid -Value 'Sill'
 
-# 기본 높이 240px (BarSize: 앞 4바이트 = 픽셀, 리틀 엔디언). 사용자가 바꾼 높이는 덮지 않는다(M5 설계 3.2절).
+# 기본 높이 240px (BarSize: 앞 4바이트 = 픽셀, 리틀 엔디언). 사용자가 바꾼 높이는 덮지 않는다(M5).
 # 등록 키는 installer\sill.iss와 같아야 한다. 한쪽을 바꾸면 다른 쪽도 바꾼다.
 $bar = "HKCU:\Software\Microsoft\Internet Explorer\Explorer Bars\$clsid"
 if (-not (Get-ItemProperty $bar -Name BarSize -ErrorAction SilentlyContinue)) {
@@ -38,14 +38,14 @@ if (-not (Get-ItemProperty $bar -Name BarSize -ErrorAction SilentlyContinue)) {
 foreach ($cat in '{00021493-0000-0000-C000-000000000046}', '{00021494-0000-0000-C000-000000000046}') {
     Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Discardable\PostSetup\Component Categories\$cat\Enum" -Recurse -ErrorAction SilentlyContinue
 }
-# 단축키 상주 프로세스(로그온 때 시작)와 폴더 빈 곳의 오른쪽 클릭 메뉴(M6 설계 3.1·3.7절)
+# 단축키 상주 프로세스(로그온 때 시작)와 폴더 빈 곳의 오른쪽 클릭 메뉴(M6)
 $hostExe = (Resolve-Path "$PSScriptRoot\..\bin\sill-host.exe").Path
 Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sill -Value "`"$hostExe`" keys"
 $menu = 'HKCU:\Software\Classes\Directory\Background\shell\Sill'
 New-Item $menu -Force | Out-Null
 Set-ItemProperty $menu -Name MUIVerb -Value 'Open in Sill'
-# sill-host.exe에 넣은 assets\sill.ico(M7 설계 3.6절). 번호(,0) 대신 리소스 ID(,-32512)로 가리킨다.
-# Windows 아이콘 캐시는 "경로,번호"로 그림을 기억해서, 개발 중 아이콘을 바꾼 뒤에도 예전 그림이 남았다(M7 결과 3.4절).
+# sill-host.exe에 넣은 assets\sill.ico(M7). 번호(,0) 대신 리소스 ID(,-32512)로 가리킨다.
+# Windows 아이콘 캐시는 "경로,번호"로 그림을 기억해서, 개발 중 아이콘을 바꾼 뒤에도 예전 그림이 남았다(M7).
 Set-ItemProperty $menu -Name Icon -Value "`"$hostExe`",-32512"
 New-Item "$menu\command" -Value "`"$hostExe`" open `"%V`"" -Force | Out-Null
 Start-Process $hostExe keys

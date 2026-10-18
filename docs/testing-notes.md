@@ -1,0 +1,52 @@
+# 시험 기록
+
+CLAUDE.md에서 옮긴, 탐색기를 띄우는 시험의 요령과 겪은 일이다. 탐색기 창·키 입력·캡처를 쓰는 시험 전에 읽는다.
+M0–M11은 0.1.0까지의 개발 단계로 공개 저장소의 커밋 제목(`M8: …`)과 같고, 0.1.1은 0.1.1 릴리스의 작업이다.
+
+- `Navigate2`에는 **존재하는 경로만** 넘긴다. 없는 경로면 탐색기가 개발자 화면에 "경로 또는 주소가 정확한지 확인" 오류 창을 띄우고 0x800704C7을 돌려준다(M2에서 겪음. 빈 폴더는 `Compress-Archive`가 zip에 넣지 않는 것도 원인이었다). `powershell -File`에 배열 인수를 넘기면 하나의 문자열로 합쳐지는 것도 주의한다. `Navigate2`의 새 탭 플래그(0x800)는 무시되므로, 탭이 필요한 시험은 개발자에게 + 버튼 클릭을 부탁한다.
+- **패널에 SendInput으로 키를 보내는 시험은 포커스가 band 창의 자손인지 키마다 확인한 뒤에만 한다.** 탐색기 창 안 어딘가로만 확인하면 키가 파일 목록으로 가서 실제 파일 작업(복사·삭제·창 닫기)이 일어난다(M1에서 겪음). WebView2의 포커스 창은 msedgewebview2 스레드에 있으므로 패널 자손 창들의 스레드마다 `GetGUIThreadInfo`로 본다. 개발자가 다른 창을 쓰는 중이면 전경 잠금 때문에 시험 창을 앞으로 가져올 수 없으니, 패널 클릭을 부탁하고 기다린다. 클릭 뒤 시험이 끝날 때까지 다른 창으로 옮기지 말아 달라고도 부탁한다(M3에서 클릭 직후 개발자가 다른 창으로 가서 한 번 멈춤).
+- 시험 스크립트의 `Navigate2`도 파일 목록에 포커스를 가져간다. 그 뒤 키를 보내려면, 시험 창이 전경이고 `WindowFromPoint`가 band(또는 자식) 창일 때만 패널 아래쪽을 마우스로 클릭해 포커스를 되찾는다(M4). 패널에서 `exit`로 셸을 바꿀 때는 band.log의 `sill-host 끊김`을 본 뒤에 다시 시작 키를 보낸다(먼저 보내면 끝나 가는 셸이 먹는다).
+- 끊긴 네트워크 경로는 응답하지 않는 문서용 주소(192.0.2.0/24)로 흉내 낸다. Windows는 응답 없던 서버를 잠시 기억해 같은 주소의 다음 확인이 1 ms에 끝나므로, 시험마다 다른 주소를 쓴다(M8 후속에서 겪음).
+- PowerShell 시험 스크립트의 함수 이름이 기본 별칭(`h`=Get-History, `measure`=Measure-Object 등)과 겹치면 별칭이 이긴다. `Verb-Noun` 이름을 쓴다(M4에서 두 번 겪음).
+- M6 시험에서 배운 것:
+  - `keybd_event`에는 스캔 코드(`MapVirtualKey`)를 함께, 이동 키(PageUp~Delete)에는 확장 키 플래그를 준다. 스캔 코드가 없으면 페이지의 `e.code`가 비어 `Ctrl+,`·스크롤 키가 듣지 않는다.
+  - 패널 포커스는 band 창의 **엄격한 자손**(WebView2 창)일 때만 친다. band 창 자체에 포커스가 있으면 키가 사라진다(패널을 처음 열 때 `UIActivateIO`가 WebView2보다 먼저 와서 생겼고, band가 준비되면 넘기도록 고쳤다).
+  - Windows 11은 비활성 탭의 `ShellTabWindowClass`도 숨기지 않는다. 활성 탭은 `FindWindowEx(frame, 0, "ShellTabWindowClass", null)`(z-순서 맨 위)다.
+  - 패널에 포커스가 있으면 `Ctrl+Tab` 같은 탐색기 키는 터미널로 간다. 탭을 바꾸는 시험은 파일 목록에 포커스가 있을 때 한다.
+  - Windows 11 메모장은 `Stop-Process`로 끝내도 세션을 저장해 두었다가 다음 실행 때 지난 창들(개발자의 창 포함)을 되살린다. 메모장을 띄우는 시험 뒤에는 연 창에만 `WM_CLOSE`를 보내고, 프로세스를 강제로 끝내지 않는다.
+  - 상주 프로세스의 `CommandLine`은 `"…\sill-host.exe" keys ` 처럼 끝에 공백이 있다.
+- M7 시험에서 배운 것:
+  - 패널의 창 구조는 `ShellTabWindowClass` > `BaseBar`(위쪽 4 px 분할선, 끌면 높이가 바뀜) > `ReBarWindow32`(왼쪽 띠 머리 27 px, × 도구 모음은 rebar의 자식) > band 창. `IBandSite::SetBandSiteInfo(BSIS_NOCAPTION)`이 띠 머리와 ×를 모두 없앤다(문서에는 "제목 글자 숨김"뿐, ReactOS는 미구현). 그래도 rebar는 band 창을 x = 2에 두고 BaseBar보다 4 px 넓게 잡으므로 band 창이 `WM_WINDOWPOSCHANGING`에서 고친다.
+  - 분할선은 BaseBar 창 클래스의 바탕 브러시(`COLOR_3DFACE`, 다크에서도 #F0F0F0)다. band가 `SetWindowSubclass`로 `WM_ERASEBKGND`를 받아 칠한다. `RB_SETBKCOLOR`·`DBIMF_BKCOLOR`는 듣지 않았다.
+  - 탐색기 모양을 바꾸는 실험은 CLSID와 어셈블리 이름이 다른 시험 band를 등록해 새 창에서 한다. 개발자의 창과 Sill에 영향이 없다. 한 번 적재된 어셈블리는 탐색기가 놓지 않으므로 고칠 때마다 어셈블리 이름을 바꾼다. 끝나면 등록을 지운다.
+  - ConPTY는 셸이 제목을 정하기 전에 `lpTitle`(없으면 실행 파일 전체 경로)을 OSC 0으로 보내고, 크기를 바꿔도 제목은 다시 보내지 않는다. 그래서 같은 크기 `r`(새 페이지)에는 sill-host가 마지막 제목을 먼저 보낸다. cmd는 실행 중인 명령을 제목에 붙인다(`cmd - ping …`), Git Bash 프롬프트는 `MINGW64:/c` 같은 제목을 낸다.
+  - 라이트 모드 시험: `AppsUseLightTheme`을 바꾸고 `WM_SETTINGCHANGE`("ImmersiveColorSet")를 방송하면 열린 패널(WebView2는 레지스트리를 직접 감시)과 탐색기가 바로 바뀐다. 시험이 끝나면 0으로 되돌리고 값을 확인한다(개발자 PC는 다크).
+  - Windows 아이콘 캐시는 메뉴 아이콘을 "경로,번호"로 기억한다. exe 아이콘을 바꿔도 같은 값이면 예전 그림이 남았다(`ie4uinit -show`, `SHChangeNotify(SHCNE_ASSOCCHANGED)` 모두 안 들음). 그래서 메뉴 키는 리소스 ID(`sill-host.exe,-32512`)로 가리킨다. 아이콘을 다시 바꾸면 같은 문제가 난다(M5에서 다룸).
+  - 시험 도구: x64 `SendInput`의 `INPUT` 구조체는 유니온이 8바이트 경계에서 시작한다. 잘못 선언하면 글자가 하나도 가지 않는다(M7에서 겪음). 글자는 `VkKeyScan`과 스캔 코드로 `keybd_event`를 쓴다. 시험 중 창의 폴더가 바뀌므로 시험 창은 경로가 아니라 HWND로 다시 찾는다. 시험 스크립트는 BOM 있는 UTF-8로 저장한다(한국어 로그 문자열을 비교하므로).
+- M9 시험에서 배운 것:
+  - 새 터미널은 시험 스크립트가 band 창에 `Sill.Key` 1을 `PostMessage`로 보내면 키 입력 없이 만들 수 있다. sill-host 수는 탐색기 PID를 부모로 둔 `sill-host.exe`로 센다.
+  - 어느 터미널에 입력이 갔는지는 터미널마다 다른 새 폴더로 `cd`를 쳐서 탐색기가 따라가는지로 본다(활성 터미널의 p만 따름).
+  - 시험 스크립트가 연 새 탐색기 창은 대개 바로 전경이고 패널에 포커스가 있다. 그래도 키마다 포커스 확인은 한다.
+  - `IWebBrowser2.Width`로 창 폭을 바꾸면 탐색기가 패널을 닫는다(`ShowDW(False)`). 창 크기는 `SetWindowPos`로 바꾼다.
+  - Segoe Fluent Icons의 +(E710)는 10 px에서 ClearType 색 번짐이 캡처에 분홍으로 보였다. 12 px로 그린다.
+- M10 시험에서 배운 것:
+  - 새 터미널의 시간은 대부분 셸 자신이다(개발자 PC의 powershell 첫 프롬프트 1.8 s 중 약 1.45 s가 프로필의 conda 초기화). Sill의 몫은 셸 실행까지 약 0.1 s다. 셸을 미리 띄워 두는 예비 터미널은 개발자가 하지 않기로 했다.
+  - WebView2 브라우저 프로세스는 같은 데이터 폴더를 쓰는 모든 탐색기 프로세스가 함께 쓴다(부모는 처음 만든 탐색기 프로세스). 복구 시험은 데이터 폴더로 브라우저를 찾고, 렌더러는 시험 창을 연 뒤 새로 생긴 것만 끈다. 다른 band의 렌더러를 끈 적이 있다.
+  - 개발자가 시험 창에 탭을 더해 자기 폴더를 열 수 있다. 시험 창을 닫기 전에 탭이 하나인지 보고, 여럿이면 `Quit`하지 않는다. 시험 폴더를 지우기 전에도 그 폴더를 보는 창이 없는지 본다.
+  - 시험 스크립트는 탐색기를 열기 전에 폴더가 있는지 본다. 없는 폴더로 `explorer.exe`를 열면 오류 창 대신 "문서" 창이 열렸다.
+  - 탭·+·× 좌표는 band 창 폭(탐색기 창보다 16 px 좁음)과 지금 탭 폭(200 px, M9에서 바뀜)으로 계산한다. 예전 값으로 계산해 시험이 엉뚱한 곳을 누른 적이 두 번 있다.
+- 0.1.1 M2 시험에서 배운 것:
+  - 탐색기 UI 스레드가 멈췄는지는 `WM_NULL`(SendMessageTimeout)로 볼 수 없다. .NET은 STA에서 기다리는 동안 보낸 메시지를 처리하므로 쓰기에 막혀 있어도 0 ms로 답했다. band 창에 `Sill.Key` 2를 게시하고 band.log의 `Sill.Key 2` 줄 시각과 비교한다.
+  - band만 바뀌었으면 쓰이는 `bin\Sill.Band.dll`을 `.old`로 비키고 그것만 빌드한 뒤, 시험 창을 `explorer.exe /separate,"폴더"`로 연다. 새 탐색기 프로세스라 새 어셈블리를 적재하고, 개발자의 폴더 창과 Sill 패널 안의 세션은 그대로다.
+  - 시험 입력은 클립보드 붙여넣기(`Ctrl+V`)와 Enter로 보내면 한글 입력기와 상관없다. 클립보드 텍스트는 저장했다가 되돌린다.
+  - 멈춘(`NtSuspendProcess`) sill-host에 128 KB 붙여넣기 하나로 0.1.0 band가 막혔다(재개할 때까지 약 2.8 s).
+- M5 시험에서 배운 것:
+  - CodeBase는 regasm처럼 `file:///` + 경로(이스케이프 없음)로 쓴다. `[Uri].AbsoluteUri`처럼 한글을 `%XX`로 바꾸면 탐색기가 band를 적재하지 않았다(한글 사용자 이름이면 패널이 안 뜸). 경로에 `#`이 있으면 어떤 꼴(`%23` 포함)로도 적재되지 않아 register.ps1과 설치 프로그램이 거부한다.
+  - 설치본 시험은 개발 등록을 설치본으로 바꿨다가 register.ps1로 되돌린다. 제거가 `%LOCALAPPDATA%\Sill`(로그·WebView2 데이터)을 지우므로 시험 전에 백업하고, 시험 로그는 제거 전에 따로 보관한다(복원이 로그를 덮어 원인을 잃은 적이 있음). 남은 RunOnce 값은 반드시 지운다(다음 로그인 때 폴더를 지움).
+  - 관리 어셈블리(Sill.Band.dll)는 프로세스 모듈 목록에 나오지 않는다. 어느 band가 적재됐는지는 같은 폴더의 `WebView2Loader.dll` 경로로 본다. 창을 닫아도 폴더 창 탐색기 프로세스가 잠시 남아 DLL을 쥐므로, 다른 창이 없을 때만 그 PID를 끝낸다.
+  - PowerShell에서 `string` 인수에 `$null`을 넘기면 빈 문자열이 된다. `FindWindowEx(…, 'ShellTabWindowClass', $null)`은 탭을 못 찾으므로 `[NullString]::Value`를 쓴다.
+  - Inno 7의 마법사 제목은 `Setup - Sill 0.1.0`(버전 포함)이고, 메시지 상자 버튼은 시스템 언어(`예(&Y)`, `확인`)다. 마법사 버튼은 `BM_CLICK`을 `PostMessage`로 보낸다. 마법사를 띄운 시험은 출력 파이프를 물려받지 않게 하고(Out-String이 끝나지 않음), `Start-Process -Wait`는 자손(register.ps1이 띄운 상주 프로세스)까지 기다리므로 쓰지 않는다.
+  - 개발자의 터미널이 전경이면 새 탐색기 창이 전경이 되지 않는다. Alt를 한 번 눌렀다 뗀 뒤 `SetForegroundWindow`를 부르면 된다(Alt는 터미널로 가지만 아무 일도 없음).
+- 0.1.1 M3 시험에서 배운 것:
+  - GitHub 러너(windows-2025)는 영어 Windows다(로캘 en-US, 코드 페이지 OEM 437·ANSI 1252). 이 PC(949)에서는 보이지 않는 코드 페이지 문제가 host-check로 드러난다(PSReadLine `InvokePrompt`가 그린 프롬프트의 한글이 `??`). 실패한 실행의 로그는 `gh run download <id> -n logs`로 받는다.
+  - 이 세션이 Sill 패널 안이면 build.ps1 대신 임시 폴더에 `bin\`과 `tools\host-check.ps1`을 두고 csc로 sill-host만 빌드해 host-check를 돌린다(host-check는 `..\bin\sill-host.exe`를 쓴다). 개발자의 `bin\`과 세션은 그대로다.

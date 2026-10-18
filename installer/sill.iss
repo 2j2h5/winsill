@@ -1,8 +1,12 @@
-﻿; Sill 설치 프로그램(Inno Setup 7). 관리자 권한 없이 %LOCALAPPDATA%\Programs\Sill에 설치하고 HKCU에만 등록한다(M5 설계 3.1–3.3절).
+﻿; Sill 설치 프로그램(Inno Setup 7). 관리자 권한 없이 %LOCALAPPDATA%\Programs\Sill에 설치하고 HKCU에만 등록한다(M5).
 ; 등록 키는 tools\register.ps1과 같아야 한다. 한쪽을 바꾸면 다른 쪽도 바꾼다.
 ; 빌드: tools\package.ps1 (build.ps1의 bin\으로 dist\Sill-Setup-<버전>.exe)
 
-#define AppVersion "0.1.0"
+; 버전은 src\Shared.cs의 Shared.Version 하나다. 빌드된 sill-host.exe의 제품 버전에서 읽는다.
+#define AppVersion GetFileProductVersionString(AddBackslash(SourcePath) + "..\bin\sill-host.exe")
+#if AppVersion == ""
+  #error bin\sill-host.exe의 버전을 읽지 못함
+#endif
 ; Inno 문자열에서 { 는 {{ 로 쓴다
 #define Clsid "{{AE2C3550-FB10-4D93-B6E1-4FBED3C0AD90}"
 #define CacheKey "Software\Microsoft\Windows\CurrentVersion\Explorer\Discardable\PostSetup\Component Categories"
@@ -57,7 +61,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Internet Explorer\Explorer Bars\{#Clsid}
 ; 탐색기가 캐시한 Explorer Bar 목록을 지워 새 바를 인식하게 한다(설치·제거 둘 다)
 Root: HKCU; Subkey: "{#CacheKey}\{{00021493-0000-0000-C000-000000000046}\Enum"; Flags: deletekey dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "{#CacheKey}\{{00021494-0000-0000-C000-000000000046}\Enum"; Flags: deletekey dontcreatekey uninsdeletekey
-; 단축키 상주 프로세스와 폴더 빈 곳의 "Open in Sill"(아이콘은 리소스 ID로, M7 결과 3.4절)
+; 단축키 상주 프로세스와 폴더 빈 곳의 "Open in Sill"(아이콘은 리소스 ID로, M7)
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Sill"; ValueData: """{app}\bin\sill-host.exe"" keys"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\Sill"; ValueType: string; ValueName: "MUIVerb"; ValueData: "Open in Sill"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\Sill"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\bin\sill-host.exe"",-32512"
@@ -132,7 +136,7 @@ begin
 end;
 
 // 쓰이는 파일(탐색기에 적재된 DLL, 열린 패널의 sill-host.exe)은 지울 수 없지만 이름은 바꿀 수 있다.
-// 관리자가 아니면 재부팅 때 바꾸기(restartreplace)가 듣지 않는다(M5 설계 2.3절).
+// 관리자가 아니면 재부팅 때 바꾸기(restartreplace)가 듣지 않는다(M5).
 procedure MoveAside(const Name: String);
 var
   F: String;

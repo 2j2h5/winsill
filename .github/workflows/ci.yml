@@ -1,0 +1,41 @@
+name: CI
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      # 남이 만든 액션은 커밋 해시로 고정한다(태그는 옮길 수 있다).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: build.ps1
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\build.ps1
+          exit $LASTEXITCODE
+      # 하나가 실패해도 넷을 다 돌린 뒤 판정한다.
+      - name: host-check
+        run: |
+          $failed = @()
+          foreach ($s in 'powershell', 'pwsh', 'cmd', 'gitbash') {
+            "=== $s"
+            powershell -ExecutionPolicy Bypass -File .\tools\host-check.ps1 -Shell $s
+            if ($LASTEXITCODE) { $failed += $s }
+          }
+          if ($failed) { "FAIL: $failed"; exit 1 }
+      - name: package.ps1
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\tools\package.ps1
+          exit $LASTEXITCODE
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs
+          path: ~\AppData\Local\Sill\*.log

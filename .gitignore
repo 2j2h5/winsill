@@ -1,6 +1,6 @@
 bin/
 deps/
-# 설계·결과 문서와 milepost 상태는 이 PC에만 둔다(공개 저장소에서 뺌, M7 결과 리뷰)
+# 설계·결과 문서와 milepost 상태는 이 PC에만 둔다(공개 저장소에서 뺌, M7)
 milepost/
 # 탐색기가 폴더에 만드는 파일
 Thumbs.db

@@ -56,6 +56,7 @@ Sill has only been tested on Windows 11 (build 26300). Each terminal uses about 
 | `Shift+PageUp` / `Shift+PageDown` | Scroll one page |
 | `Ctrl+C` | Copy if text is selected, otherwise send `^C` |
 | `Ctrl+V` | Paste |
+| `Ctrl+click` | Open a link in your default browser (http and https only) |
 
 Sill handles these keys itself and doesn't send them to the shell (except `^C`). `` Ctrl+` `` and `` Ctrl+Shift+` `` work while a File Explorer window is in the foreground.
 
@@ -72,7 +73,7 @@ Right-click an empty area of a folder and choose **Open in Sill**. On Windows 11
 
 ### Folder sync
 
-- File Explorer → terminal: Sill types `cd` only while the shell is waiting at the prompt. If you are typing a command or a program is running (for example Claude Code or `vim`), Sill skips the change and doesn't catch up later. It never sends input to a running program.
+- File Explorer → terminal: Sill types `cd` only while the shell is waiting at the prompt. If you are typing a command or a program is running (for example Claude Code or `vim`), Sill skips the change and doesn't catch up later. It never sends input to a running program. Once you start typing at the prompt, the line counts as in use until you press Enter or Ctrl+C, even if you delete what you typed.
 - Terminal → File Explorer: when the shell's folder changes, File Explorer follows.
 - With several terminals, only the visible one is kept in sync. Switching tabs doesn't move File Explorer.
 - In PowerShell and Git Bash the `cd` from Sill doesn't show up in the terminal or in your command history. In cmd it is typed as a normal command. cmd can't `cd` to a UNC path, so those changes are skipped.
@@ -122,19 +123,21 @@ The panel follows the Windows app mode (light or dark) under Settings > Personal
 [sill-host.exe keys]  one per sign-in, shortcut keys
 ```
 
-The code inside File Explorer is kept small, because an exception there brings down `explorer.exe`. Shells run in `sill-host.exe`. The shell integration reports the prompt state with OSC 133 and the current folder with OSC 9;9. Sill uses these to decide when it is safe to `cd`.
+The code inside File Explorer is kept small, because an exception there brings down `explorer.exe`. Shells run in `sill-host.exe`. The shell integration reports the prompt state with OSC 133 and the current folder with OSC 9;9. Sill uses these to decide when it is safe to `cd`. Each terminal gets a random value that only its shell integration knows. Sill ignores these sequences when they don't carry it, so output from a program can't make Sill type `cd` or move File Explorer.
 
 ## Build from source
 
 You don't need the .NET SDK. The build uses the C# compiler that comes with Windows (.NET Framework 4.8).
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build.ps1             # bin\ (closes File Explorer folder windows that hold the DLL)
+powershell -ExecutionPolicy Bypass -File .\build.ps1             # bin\ (runs the unit tests first; closes File Explorer folder windows that hold the DLL)
 powershell -ExecutionPolicy Bypass -File .\tools\register.ps1    # register bin\ for the current user
 powershell -ExecutionPolicy Bypass -File .\tools\host-check.ps1  # sill-host test without File Explorer
 powershell -ExecutionPolicy Bypass -File .\tools\package.ps1     # dist\Sill-Setup-<version>.exe (downloads Inno Setup into deps\)
 powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1  # remove the registration
 ```
+
+GitHub Actions runs the build, the shell tests and the installer build on every push to main.
 
 ## License
 

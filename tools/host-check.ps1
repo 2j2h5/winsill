@@ -6,6 +6,7 @@
 # M8: 출력 묶기, 되울림 지연, 파이프 ACL, PS1을 매번 쓰는 .bashrc, 낡은 되먹임 항목, 끊긴 네트워크 경로 뒤 입력, 끊긴 시작 폴더.
 # M9: 종료 줄 뒤의 종료 코드(e).
 # M10: 시작 제목, 셸을 띄우는 동안 쓰기가 막히지 않음.
+# 0.1.1: 셸 통합 난수가 셸 환경에 남지 않음, 출력에 섞인 셸 통합 시퀀스로는 cd·p가 일어나지 않음.
 param([ValidateSet('powershell', 'pwsh', 'cmd', 'gitbash')] [string]$Shell = 'powershell')
 $ErrorActionPreference = 'Stop'
 $base = Join-Path $env:TEMP ('sill-check-' + [guid]::NewGuid().ToString('N'))
@@ -13,10 +14,14 @@ $dirA = New-Item -ItemType Directory "$base\a"
 $dirB = New-Item -ItemType Directory "$base\it's [x] 한글 `$x #b %PATH%"
 
 # 셸마다 다른 명령. 출력 확인용 echo는 입력 에코에 'sill-ok'가 그대로 나오지 않게 쓴다.
+# show: 파일을 화면에 출력하고 2초 기다림(악성 파일을 cat하는 모양). nonce: 셸의 SILL_NONCE를 n=[…]로 출력.
 $cmds = @{
-    powershell = @{ ok = "Write-Output ('sill' + '-ok')"; sleep = 'Start-Sleep 2'; flood = '1..20000'; cd = { param($p) "cd -LiteralPath '" + ($p -replace "'", "''") + "'" } }
-    cmd        = @{ ok = 'echo sill-^ok'; sleep = 'ping -n 3 127.0.0.1 >nul'; flood = 'for /l %i in (1,1,20000) do @echo %i'; cd = { param($p) 'cd /d "' + $p.Replace('%', '%""') + '"' } }
-    gitbash    = @{ ok = "echo sill-''ok"; sleep = 'sleep 2'; flood = 'seq 1 20000'; cd = { param($p) "cd -- '" + $p.Replace("'", "'\''") + "'" } }
+    powershell = @{ ok = "Write-Output ('sill' + '-ok')"; sleep = 'Start-Sleep 2'; flood = '1..20000'; cd = { param($p) "cd -LiteralPath '" + ($p -replace "'", "''") + "'" }
+                    show = { param($f) "Get-Content -LiteralPath '$f'; Start-Sleep 2" }; nonce = 'Write-Output "n=[$env:SILL_NONCE]"' }
+    cmd        = @{ ok = 'echo sill-^ok'; sleep = 'ping -n 3 127.0.0.1 >nul'; flood = 'for /l %i in (1,1,20000) do @echo %i'; cd = { param($p) 'cd /d "' + $p.Replace('%', '%""') + '"' }
+                    show = { param($f) "type `"$f`" & ping -n 3 127.0.0.1 >nul" }; nonce = 'echo n=[%SILL_NONCE%]' }
+    gitbash    = @{ ok = "echo sill-''ok"; sleep = 'sleep 2'; flood = 'seq 1 20000'; cd = { param($p) "cd -- '" + $p.Replace("'", "'\''") + "'" }
+                    show = { param($f) "cat '" + $f.Replace('\', '/') + "'; sleep 2" }; nonce = 'echo "n=[$SILL_NONCE]"' }
 }
 $cmds.pwsh = $cmds.powershell
 $c = $cmds[$Shell]
@@ -59,10 +64,16 @@ function WaitFor([scriptblock]$cond, [double]$sec = 20) {
     }
     [bool](& $cond)
 }
-function Cwd { $m = [regex]::Matches($script:text, "\x1b\]9;9;([^\x07\x1b]*)"); if ($m.Count) { $m[$m.Count - 1].Groups[1].Value } }
+# 0.1.1: 셸 통합의 133;A·B에는 sill-host가 세션마다 만든 난수가 붙는다. 첫 프롬프트에서 읽고, 그 난수가 붙은 것만 센다.
+# 폴더도 그 A 바로 뒤의 9;9만 읽는다. 위조 항목이 출력에 난수 없는 시퀀스를 섞기 때문이다.
+function Get-Nonce {
+    if (-not $script:nonce) { $m = [regex]::Match($script:text, "\x1b\]133;A;sill=([0-9a-f]{32})"); if ($m.Success) { $script:nonce = $m.Groups[1].Value } }
+    $script:nonce
+}
+function Cwd { $n = Get-Nonce; $m = [regex]::Matches($script:text, "\x1b\]133;A;sill=$n(?:\x07|\x1b\\)\x1b\]9;9;([^\x07\x1b]*)"); if ($n -and $m.Count) { $m[$m.Count - 1].Groups[1].Value } }
 # 프롬프트는 133;A로 센다. bash는 입력 줄을 다시 그릴 때 133;B만 다시 낸다.
-function Prompts { [regex]::Matches($script:text, "\x1b\]133;A").Count }
-function Ready { $i = $script:text.LastIndexOf("$([char]27)]133;A"); $i -ge 0 -and $script:text.IndexOf("$([char]27)]133;B", $i) -ge 0 }
+function Prompts { $n = Get-Nonce; if (-not $n) { return 0 }; [regex]::Matches($script:text, "\x1b\]133;A;sill=$n").Count }
+function Ready { $n = Get-Nonce; $i = $script:text.LastIndexOf("$([char]27)]133;A;sill=$n"); $n -and $i -ge 0 -and $script:text.IndexOf("$([char]27)]133;B;sill=$n", $i) -ge 0 }
 # 프롬프트 수는 보내기 전에 세어 둔다. 보낸 뒤에 세면 그사이 온 프롬프트를 놓친다.
 function WaitPrompt([int]$n) { WaitFor { (Prompts) -gt $n -and (Ready) } | Out-Null }
 $results = [ordered]@{}
@@ -156,6 +167,23 @@ WaitFor { (Cwd) -eq $dirB.FullName } 10 | Out-Null
 WaitFor { $false } 1 | Out-Null
 $results['빠른 연속 이동'] = (Cwd) -eq $dirB.FullName
 
+# 0.1.1: 셸 통합의 난수는 셸이 띄우는 프로그램에 가지 않는다(cmd는 %SILL_NONCE%가 풀리지 않고 그대로 나옴).
+$len = $script:text.Length; $n = Prompts; Send "i$($c.nonce)`r"; WaitPrompt $n
+$seg = $script:text.Substring($len)
+$results['난수가 셸 환경에 없음'] = $seg -match 'n=\[' -and $seg -notmatch "n=\[[^\]]*$(Get-Nonce)"
+
+# 0.1.1: 실행 중인 프로그램의 출력에 섞인 셸 통합 시퀀스(악성 파일을 cat, ssh 안의 셸)로는 cd도 p도 일어나지 않는다.
+# 파일에는 A 폴더로 가는 9;9, 난수 없는 A·B, 다른 난수의 A·B가 있다. 출력하는 동안 탐색기에서 A로 이동한다.
+$e = [char]27; $zero = '0' * 32
+$spoof = "$base\spoof.txt"
+[IO.File]::WriteAllText($spoof, "$e]9;9;$($dirA.FullName)`a$e]133;A`a$e]133;B`a$e]133;A;sill=$zero$e\$e]9;9;$($dirA.FullName)$e\$e]133;B;sill=$zero$e\`r`n")
+$n = Prompts; $m0 = $script:moves.Count
+Send ("i" + (& $c.show $spoof) + "`r")
+WaitFor { $script:text.Contains("sill=$zero") } 5 | Out-Null
+Send "c$dirA"; WaitPrompt $n
+WaitFor { $false } 1.5 | Out-Null    # 들어간 cd가 있다면 실행될 시간
+$results['출력의 위조 시퀀스 → cd·p 없음'] = (Cwd) -eq $dirB.FullName -and $script:moves.Count -eq $m0 -and (Prompts) -eq $n + 1
+
 # 지금까지는 첫 프롬프트와 Sill이 넣은 cd뿐이므로 p가 없어야 한다.
 $results['첫 프롬프트·Sill의 cd는 p 없음'] = $script:moves.Count -eq 0
 
@@ -186,11 +214,6 @@ $n = Prompts; Send "c$dirB"; WaitPrompt $n
 $results['낡은 되먹임 항목 버림'] = (Cwd) -eq $dirB.FullName
 $n = Prompts; Send "c$dirA"; WaitPrompt $n
 
-# 셸이 없는 폴더를 알려도 p를 보내지 않는다(탐색기 오류 창). 다음 프롬프트는 A로 돌아오므로 p A는 온다.
-if ($Shell -in 'powershell', 'pwsh') {
-    $n = Prompts; Send "iWrite-Host -NoNewline ([char]27 + ']9;9;C:\sill-nope' + [char]27 + '\')`r"; WaitPrompt $n
-    $results['없는 경로는 p 없음'] = $script:moves -notcontains 'C:\sill-nope'
-}
 if ($Shell -eq 'cmd') {
     # cmd는 UNC 경로로 cd할 수 없으므로 넣지 않는다.
     $n = Prompts; Send 'c\\localhost\c$\Windows'; WaitFor { $false } 2 | Out-Null
@@ -230,7 +253,7 @@ $hostProc = Start-Process "$PSScriptRoot\..\bin\sill-host.exe" "$name $Shell" -P
 $pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', $name, 'InOut', 'Asynchronous')
 $pipe.Connect(5000)
 $pipe.ReadMode = 'Message'
-$script:text = ''; $script:atStart = $true; $script:t = $null
+$script:text = ''; $script:atStart = $true; $script:t = $null; $script:nonce = $null   # 세션마다 난수가 다르다
 $sw.Restart()
 Send ('c' + (Get-DeadPath)); Send 'r100,30'
 # M10: sill-host가 셸을 띄우는 동안(시작 폴더 확인 2 s)에도 band의 쓰기는 막히지 않는다. 빈 입력이라 셸에는 아무것도 가지 않는다.

@@ -1,4 +1,4 @@
-﻿# 설치 프로그램 dist\Sill-Setup-<버전>.exe를 만든다(M5 설계 3.1절). bin\은 build.ps1로 먼저 빌드해 둔다.
+﻿# 설치 프로그램 dist\Sill-Setup-<버전>.exe를 만든다(M5). bin\은 build.ps1로 먼저 빌드해 둔다.
 # Inno Setup 컴파일러는 다른 의존성처럼 deps\에 한 번 받는다. 공식 설치 파일을 해시로 확인한 뒤 휴대용(/PORTABLE=1)으로 풀어
 # 관리자 권한도, 앱 목록·파일 연결 같은 흔적도 남기지 않는다.
 $ErrorActionPreference = 'Stop'

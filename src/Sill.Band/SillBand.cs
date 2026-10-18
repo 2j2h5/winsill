@@ -24,6 +24,7 @@ namespace Sill.Band
         public const string Clsid = "AE2C3550-FB10-4D93-B6E1-4FBED3C0AD90";
 
         static readonly string Dir = Path.GetDirectoryName(new Uri(typeof(SillBand).Assembly.CodeBase).LocalPath);
+        const string PageRoot = "https://sill.example/";
 
         // WebView2 환경은 만든 스레드에서만 쓸 수 있고, 탐색기는 창마다 스레드가 다르다.
         [ThreadStatic] static Task<CoreWebView2Environment> _env;
@@ -33,7 +34,7 @@ namespace Sill.Band
         CoreWebView2Controller _web;
         Task<CoreWebView2Environment> _envUsed;    // _web을 만든 환경. 브라우저 프로세스가 죽으면 이 환경을 버린다
         DateTime _recovered;                        // 마지막으로 WebView2를 다시 만든 시각
-        // 터미널 번호 → 세션(M9 설계 3.1절). 번호는 1부터 붙이고 다시 쓰지 않으므로 번호 순서가 탭 순서다.
+        // 터미널 번호 → 세션(M9). 번호는 1부터 붙이고 다시 쓰지 않으므로 번호 순서가 탭 순서다.
         readonly SortedDictionary<int, Session> _terms = new SortedDictionary<int, Session>();
         int _active, _lastId;               // 활성 터미널(폴더 동기화 상대), 마지막으로 붙인 번호
         object _browser;                    // 이 탭의 IWebBrowser2
@@ -64,7 +65,7 @@ namespace Sill.Band
         {
             return Guard("SetSite", () =>
             {
-                Log("SetSite({0})", pUnkSite == null ? "null" : "site");
+                Log("SetSite({0}) {1}", pUnkSite == null ? "null" : "site", Shared.Version);
                 DestroyView();
                 _site = pUnkSite;
                 if (pUnkSite == null) return Native.S_OK;
@@ -88,7 +89,7 @@ namespace Sill.Band
                 Log("SetParent 결과 old=0x{0:X} err={1}", old.ToInt64(), Marshal.GetLastWin32Error());
                 _view = view;
 
-                // 세션은 패널 여닫기가 아니라 band 수명(SetSite → CloseDW)에 묶는다(M0 결과 표 2). 첫 터미널은 페이지가 뜨는 동안 준비한다.
+                // 세션은 패널 여닫기가 아니라 band 수명(SetSite → CloseDW)에 묶는다(M0). 첫 터미널은 페이지가 뜨는 동안 준비한다.
                 Safe("탐색기 이벤트 연결", () => WatchBrowser(pUnkSite));
                 NewTerminal("시작");
                 InitWebView(view);
@@ -126,11 +127,19 @@ namespace Sill.Band
                 core.Settings.AreDefaultContextMenusEnabled = false;
                 core.Settings.IsStatusBarEnabled = false;
                 core.Settings.IsZoomControlEnabled = false;
-                // .local은 멀티캐스트 DNS 이름이라 첫 적재가 2초 늦었다. .example은 예약된 이름이다(M6 설계 2.2절).
+                // .local은 멀티캐스트 DNS 이름이라 첫 적재가 2초 늦었다. .example은 예약된 이름이다(M6).
                 core.SetVirtualHostNameToFolderMapping("sill.example", Path.Combine(Dir, "web"), CoreWebView2HostResourceAccessKind.Deny);
                 core.WebMessageReceived += OnWebMessage;
                 core.ProcessFailed += (s, e) => Safe("ProcessFailed", () => Recover(e.ProcessFailedKind));
-                core.Navigate("https://sill.example/index.html");
+                // 링크는 페이지가 u로 넘긴다(0.1.1). 그 밖의 새 창(주소창 없는 팝업)과 페이지 밖 이동은 막는다.
+                core.NewWindowRequested += (s, e) => Safe("NewWindowRequested", () => { e.Handled = true; Log("새 창 막음"); });
+                core.NavigationStarting += (s, e) => Safe("NavigationStarting", () =>
+                {
+                    if (e.Uri.StartsWith(PageRoot, StringComparison.Ordinal)) return;
+                    e.Cancel = true;
+                    Log("이동 막음");
+                });
+                core.Navigate(PageRoot + "index.html");
                 // 패널을 열 때 UIActivateIO가 컨트롤러보다 먼저 와서 포커스가 band 창에 남는다. 그대로 두면 키가 사라진다(M6 시험).
                 if (view.Focused) web.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
                 Log("WebView2 준비 (스레드 {0})", System.Threading.Thread.CurrentThread.ManagedThreadId);
@@ -138,7 +147,7 @@ namespace Sill.Band
             catch (Exception e)
             {
                 Log("WebView2 예외: {0}", e);
-                // 실패한 환경을 남기면 이 창의 band는 모두 실패한다. 버리고, 안내를 보인 뒤 패널을 다시 열 때(ShowDW) 다시 만든다(M8 설계 3.4절).
+                // 실패한 환경을 남기면 이 창의 band는 모두 실패한다. 버리고, 안내를 보인 뒤 패널을 다시 열 때(ShowDW) 다시 만든다(M8).
                 if (_env != null && _env.IsFaulted) _env = null;
                 if (view == _view && _web == null) ShowNotice(e.Message);
             }
@@ -157,7 +166,7 @@ namespace Sill.Band
             Log("WebView2 안내");
         }
 
-        // M6 설계 3.3절: 브라우저나 렌더러 프로세스가 죽으면 컨트롤러를 다시 만든다. sill-host와 셸은 그대로이고,
+        // M6: 브라우저나 렌더러 프로세스가 죽으면 컨트롤러를 다시 만든다. sill-host와 셸은 그대로이고,
         // 새 페이지가 보내는 같은 크기의 r로 sill-host가 화면을 다시 그린다. 런타임이 깨졌을 때 되풀이하지 않도록 10초 안의 재실패는 두고 본다.
         void Recover(CoreWebView2ProcessFailedKind kind)
         {
@@ -174,7 +183,7 @@ namespace Sill.Band
             InitWebView(_view);
         }
 
-        // 페이지의 메시지(M9 설계 표 4). 한 터미널의 것은 종류 글자 뒤에 번호와 빈칸이 붙는다(i2 dir). 번호를 떼어 그 세션에 넘긴다.
+        // 페이지의 메시지(M9). 한 터미널의 것은 종류 글자 뒤에 번호와 빈칸이 붙는다(i2 dir). 번호를 떼어 그 세션에 넘긴다.
         void OnWebMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             Safe("OnWebMessage", () =>
@@ -184,6 +193,7 @@ namespace Sill.Band
                 else if (m == "t") ApplyTheme();
                 else if (m == "l") ListTerminals();
                 else if (m == "+") NewTerminal("새 터미널");
+                else if (m[0] == 'u') OpenLink(m.Substring(1));
                 else if (m == "s") { if (_terms.ContainsKey(_active)) _terms[_active].Send(m); }
                 else
                 {
@@ -198,6 +208,16 @@ namespace Sill.Band
                     else if (_terms.TryGetValue(id, out s)) s.Send(m[0] + rest);
                 }
             });
+        }
+
+        // OSC 8 링크를 Ctrl+클릭(M2). 페이지(xterm.js)도 http·https 말고는 링크로 만들지 않지만 여기서 다시 본다.
+        // 로그에는 호스트만 남긴다. 로그인 링크처럼 주소에 일회용 토큰이 들어 있을 수 있다.
+        void OpenLink(string url)
+        {
+            Uri u;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out u) || (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)) { Log("링크 거부"); return; }
+            Log("링크 열기 {0}", u.Host);
+            using (Process.Start(u.AbsoluteUri)) { }
         }
 
         void Post(string m)
@@ -232,7 +252,7 @@ namespace Sill.Band
             SendFolder(id, "다시 시작");
         }
 
-        // 탭 ×, 또는 셸이 코드 0으로 끝남(M9 설계 3.6절). 파이프를 닫으면 sill-host가 끝나고 작업 개체가 셸을 끝낸다.
+        // 탭 ×, 또는 셸이 코드 0으로 끝남(M9). 파이프를 닫으면 sill-host가 끝나고 작업 개체가 셸을 끝낸다.
         // 마지막 터미널이면 패널을 닫는다. 다시 열면(ShowDW) 새 터미널을 만든다.
         void CloseTerminal(int id, string why)
         {
@@ -253,13 +273,13 @@ namespace Sill.Band
 
         void ToPage(int id, string m)
         {
-            // 터미널 → 탐색기는 활성 터미널만(M9 설계 3.5절). 버린 p의 되먹임 항목은 sill-host에서 2초 뒤 낡는다.
+            // 터미널 → 탐색기는 활성 터미널만(M9). 버린 p의 되먹임 항목은 sill-host에서 2초 뒤 낡는다.
             if (m[0] == 'p')
             {
                 if (id == _active) Safe("셸 폴더", () => Navigate(m.Substring(1)));
                 else Log("p 건너뜀(뒤 터미널 {0}) {1}", id, m.Substring(1));
             }
-            // Ctrl+,: sill-host의 자식은 작업 개체와 함께 끝나므로 메모장은 band가 띄운다(M6 설계 3.6절).
+            // Ctrl+,: sill-host의 자식은 작업 개체와 함께 끝나므로 메모장은 band가 띄운다(M6).
             else if (m[0] == 's') Safe("설정 파일", () => Process.Start("notepad.exe", "\"" + m.Substring(1) + "\""));
             else if (m[0] == 'e')
             {
@@ -269,9 +289,9 @@ namespace Sill.Band
             else Post(m.Insert(1, id + " "));     // 출력은 클 수 있으므로 복사를 한 번만 한다
         }
 
-        // --- 단축키와 오른쪽 클릭 메뉴(M6 설계 표 4): 상주 프로세스가 활성 탭의 band 창에 보낸다 ---
+        // --- 단축키와 오른쪽 클릭 메뉴(M6): 상주 프로세스가 활성 탭의 band 창에 보낸다 ---
 
-        // 상주 프로세스는 패널이 닫혀 있어도 이 탭의 band 창이 있으면 키를 보낸다. 패널은 band가 연다(M9 설계 3.4절).
+        // 상주 프로세스는 패널이 닫혀 있어도 이 탭의 band 창이 있으면 키를 보낸다. 패널은 band가 연다(M9).
         // 새 터미널을 먼저 만들고 열므로, 터미널이 없던 패널도 하나만 생긴다(ShowDW는 터미널이 있으면 만들지 않음).
         void OnKey(int action)
         {
@@ -288,7 +308,7 @@ namespace Sill.Band
             else ShowPanel(true);   // 열면 탐색기의 UIActivateIO가 패널에 포커스를 준다
         }
 
-        // Ctrl+`와 탭 줄의 ×(M7 설계 3.3절)는 포커스를 파일 목록에 두고 닫는다. 세션은 band 수명이라 그대로다.
+        // Ctrl+`와 탭 줄의 ×(M7)는 포커스를 파일 목록에 두고 닫는다. 세션은 band 수명이라 그대로다.
         void ShowPanel(bool show)
         {
             if (!show) FocusFileList();
@@ -297,7 +317,7 @@ namespace Sill.Band
                 _browser.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, _browser, new object[] { "{" + Clsid + "}", show, null }))));
         }
 
-        // --- 탐색기가 그리는 모양(M7 설계 3.1·3.2·3.5절) ---
+        // --- 탐색기가 그리는 모양(M7) ---
 
         // 탐색기의 왼쪽 띠 머리(제목, ×)를 없애고, 위쪽 분할선을 칠하도록 BaseBar를 서브클래싱한다. 보일 때마다 부른다.
         void Restyle()
@@ -328,7 +348,7 @@ namespace Sill.Band
             if (_bar != IntPtr.Zero) Native.InvalidateRect(_bar, IntPtr.Zero, true);
         }
 
-        // 분할선은 BaseBar 창 클래스의 바탕 브러시(COLOR_3DFACE, 다크 모드에서도 #F0F0F0)가 칠한다(M7 설계 2.2절).
+        // 분할선은 BaseBar 창 클래스의 바탕 브러시(COLOR_3DFACE, 다크 모드에서도 #F0F0F0)가 칠한다(M7).
         // 바탕을 지울 때 rebar가 덮지 않은 위쪽을 탐색기의 세로 분할선처럼 칠한다. 마우스 처리(끌어서 높이 바꾸기)는 그대로 둔다.
         static readonly Native.SubclassProc BarProc = OnBaseBar;    // 대리자가 수집되지 않게 붙들어 둔다
 
@@ -397,10 +417,10 @@ namespace Sill.Band
             return (IShellBrowser)sb;
         }
 
-        // --- 터미널 → 탐색기 (M3 설계 3.4절): sill-host가 정한 폴더로 이동만 한다. 돌아오는 c는 sill-host가 버린다. ---
+        // --- 터미널 → 탐색기 (M3): sill-host가 정한 폴더로 이동만 한다. 돌아오는 c는 sill-host가 버린다. ---
 
-        // Navigate2는 새 보기에 포커스를 줘서 사용자가 패널에 이어 치는 키가 파일 목록으로 간다(M3 결과).
-        // BrowseObject는 SBSP_ACTIVATE_NOFOCUS로 포커스를 패널에 그대로 둔다(M3 설계 표 4의 대안).
+        // Navigate2는 새 보기에 포커스를 줘서 사용자가 패널에 이어 치는 키가 파일 목록으로 간다(M3).
+        // BrowseObject는 SBSP_ACTIVATE_NOFOCUS로 포커스를 패널에 그대로 둔다(M3).
         void Navigate(string path)
         {
             const uint SBSP_SAMEBROWSER = 0x1, SBSP_ABSOLUTE = 0x0, SBSP_ACTIVATE_NOFOCUS = 0x80000;
@@ -415,7 +435,7 @@ namespace Sill.Band
             if (hr != Native.S_OK) Log("BrowseObject hr=0x{0:X8}", hr);
         }
 
-        // --- 탐색기 → 터미널 (M2 설계 3.2절): 폴더가 바뀌면 경로만 sill-host에 보낸다. cd를 넣을지는 sill-host가 정한다. ---
+        // --- 탐색기 → 터미널 (M2): 폴더가 바뀌면 경로만 sill-host에 보낸다. cd를 넣을지는 sill-host가 정한다. ---
 
         void WatchBrowser(object site)
         {
@@ -428,13 +448,13 @@ namespace Sill.Band
             _events.Advise(new BrowserEvents(() => Safe("NavigateComplete2", () => SendFolder(_active, "이동"))), out _cookie);
         }
 
-        // 탐색기 → 터미널은 활성 터미널(또는 새로 시작하는 터미널)에만(M9 설계 3.5절).
+        // 탐색기 → 터미널은 활성 터미널(또는 새로 시작하는 터미널)에만(M9).
         void SendFolder(int id, string why)
         {
             Session session;
             if (_browser == null || !_terms.TryGetValue(id, out session)) return;
             // 표 1: Document.Folder.Self.Path는 파일 시스템 경로를 그대로, 가상 폴더는 ::{GUID}로 준다.
-            // 얻은 COM 개체는 바로 놓는다. 두면 탐색할 때마다 지난 폴더의 보기가 GC 때까지 남는다(M10 설계 3.6절).
+            // 얻은 COM 개체는 바로 놓는다. 두면 탐색할 때마다 지난 폴더의 보기가 GC 때까지 남는다(M10).
             object doc = null, folder = null, self = null;
             string path;
             try
@@ -457,7 +477,7 @@ namespace Sill.Band
 
         // 얻은 COM 개체를 얻은 만큼만 놓는다. 탐색기의 .NET 셸 확장들은 한 AppDomain에서 같은 RCW를 함께 쓰지만, RCW의 참조 수는
         // 얻을 때마다 오르므로 얻은 만큼 놓으면 다른 확장의 참조는 남는다. 받은 개체(이벤트 인자 pDisp 등)는 놓지 않는다.
-        // 놓기를 빼면 탐색 500번에 탐색기 메모리가 약 3.4 MB 더 남았다(M11 설계 2.3절).
+        // 놓기를 빼면 탐색 500번에 탐색기 메모리가 약 3.4 MB 더 남았다(M11).
         static void Release(object o)
         {
             if (o != null && Marshal.IsComObject(o)) Marshal.ReleaseComObject(o);
@@ -491,9 +511,9 @@ namespace Sill.Band
                 // 탐색기는 패널을 닫았다 열 때마다 사이트 스타일을 되돌리므로 보일 때마다 다시 적용한다. 그 전의 배치에는 띠 머리가 있다.
                 if (_view != null && !fShow) _view.CaptionOff = false;
                 if (_view != null && fShow) Safe("탐색기 모양", Restyle);
-                // 마지막 탭을 닫아 터미널이 없는 패널을 다시 열면 새 터미널로 시작한다(M9 설계 3.6절).
+                // 마지막 탭을 닫아 터미널이 없는 패널을 다시 열면 새 터미널로 시작한다(M9).
                 if (_view != null && fShow && _terms.Count == 0) NewTerminal("다시 열기");
-                // WebView2를 만들지 못해 안내를 보이던 패널을 다시 열면 다시 시도한다(M8 설계 3.4절).
+                // WebView2를 만들지 못해 안내를 보이던 패널을 다시 열면 다시 시도한다(M8).
                 if (_view != null && fShow && _notice != null)
                 {
                     _notice.Dispose();
@@ -583,7 +603,7 @@ namespace Sill.Band
         }
     }
 
-    // band 창. 상주 프로세스가 제목("Sill")으로 찾아 Sill.Key 메시지를 보낸다(M6 설계 3.1절). wParam: 0 토글, 1 다시 시작, 2 포커스.
+    // band 창. 상주 프로세스가 제목("Sill")으로 찾아 Sill.Key 메시지를 보낸다(M6). wParam: 0 토글, 1 다시 시작, 2 포커스.
     sealed class View : Control
     {
         static readonly uint KeyMessage = Native.RegisterWindowMessage("Sill.Key");
@@ -600,7 +620,7 @@ namespace Sill.Band
             base.WndProc(ref m);
         }
 
-        // M7 설계 3.1절: rebar는 띠 머리가 없어도 band 창을 x = 2에 두고, BaseBar보다 4 px 넓게 잡는다.
+        // M7: rebar는 띠 머리가 없어도 band 창을 x = 2에 두고, BaseBar보다 4 px 넓게 잡는다.
         // band 창이 rebar 왼쪽 끝부터 BaseBar 오른쪽 끝까지 덮게 고친다. 띠 머리가 남았으면(BSIS_NOCAPTION이 안 들음) × 도구 모음을 숨기고 덮는다(QTTabBar의 방법).
         void Place(IntPtr lParam)
         {
@@ -626,7 +646,7 @@ namespace Sill.Band
         }
     }
 
-    // 탐색기와 같은 색(M7 설계 표 4). 탐색기는 Windows의 앱 모드(AppsUseLightTheme)를 따른다.
+    // 탐색기와 같은 색(M7). 탐색기는 Windows의 앱 모드(AppsUseLightTheme)를 따른다.
     // band 창은 자식 창이라 모드 변경(WM_SETTINGCHANGE)을 받지 않으므로, 시작할 때와 페이지의 t를 받았을 때 읽는다.
     static class Theme
     {

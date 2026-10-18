@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <link rel="stylesheet" href="xterm.css">
 <style>
-  /* 탐색기와 같은 색(M7 설계 표 4·5). 라이트 값은 band의 Theme과 같다. */
+  /* 탐색기와 같은 색(M7). 라이트 값은 band의 Theme과 같다. */
   :root { --strip: #202020; --bg: #191919; --text: #ffffff; --hover: rgba(255, 255, 255, 0.06); --sep: rgba(255, 255, 255, 0.25); }
   @media (prefers-color-scheme: light) {
     :root { --strip: #e8e8e8; --bg: #ffffff; --text: #1a1a1a; --hover: rgba(0, 0, 0, 0.04); --sep: rgba(0, 0, 0, 0.2); }
   }
   html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
-  /* 탭 줄: Windows Terminal처럼 터미널마다 탭(M7 설계 3.3절). 높이 28 px(M9 설계 표 5). 선택된 탭은 터미널과 같은 바탕이라 터미널로 이어진다.
-     탭은 줄 높이를 다 채우고, 제목·탭 ×·+·패널 ×는 모두 줄 가운데에 맞춘다(M9 결과 리뷰). */
+  /* 탭 줄: Windows Terminal처럼 터미널마다 탭(M7). 높이 28 px(M9). 선택된 탭은 터미널과 같은 바탕이라 터미널로 이어진다.
+     탭은 줄 높이를 다 채우고, 제목·탭 ×·+·패널 ×는 모두 줄 가운데에 맞춘다(M9). */
   #strip { position: absolute; inset: 0 0 auto 0; height: 28px; background: var(--strip); display: flex; align-items: center;
            font: 12px "Segoe UI Variable Text", "Segoe UI", sans-serif; color: var(--text); user-select: none; }
   #tabs { display: flex; gap: 2px; margin-left: 8px; padding-right: 2px; min-width: 0; height: 100%; overflow: hidden; }
@@ -29,7 +29,7 @@
   .x { width: 20px; height: 20px; font-size: 8px; }
   #new { width: 32px; height: 24px; font-size: 12px; }
   #close { width: 32px; height: 24px; margin: 0 4px 0 auto; }
-  /* 터미널은 모두 같은 자리에 겹친다. display: none과 달리 숨은 터미널도 크기를 잴 수 있어, 보이게 하기 전에 맞춘다(M9 설계 3.3절, M10 설계 3.4절). */
+  /* 터미널은 모두 같은 자리에 겹친다. display: none과 달리 숨은 터미널도 크기를 잴 수 있어, 보이게 하기 전에 맞춘다(M9, M10). */
   .term { position: absolute; inset: 30px 0 0 6px; visibility: hidden; }
   .term.active { visibility: visible; }
 </style>
@@ -39,12 +39,12 @@
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
 <script>
-// 화면과 입력만 맡는다. 메시지는 band를 거쳐 sill-host로 간다: r(크기) i(입력) s(설정 파일) / o(출력) x(세션 끝남) n(다시 시작). M1 설계 표 2, M6 설계 표 6.
-// 한 터미널의 메시지는 종류 글자 뒤에 band가 붙인 번호와 빈칸이 온다(i2 dir). M9 설계 표 4.
-// band가 직접 받는 것: h(패널 닫기) t(앱 모드가 바뀜) l(페이지가 떴다) +(새 터미널) a(활성 터미널) -(터미널 닫기). M7 설계 표 7, M9 설계 표 4.
+// 화면과 입력만 맡는다. 메시지는 band를 거쳐 sill-host로 간다: r(크기) i(입력) s(설정 파일) / o(출력) x(세션 끝남) n(다시 시작). M1, M6.
+// 한 터미널의 메시지는 종류 글자 뒤에 band가 붙인 번호와 빈칸이 온다(i2 dir). M9.
+// band가 직접 받는 것: h(패널 닫기) t(앱 모드가 바뀜) l(페이지가 떴다) +(새 터미널) a(활성 터미널) -(터미널 닫기) u(링크 열기). M7, M9.
 const host = window.chrome.webview;
 
-// 터미널 색표: 바탕은 탐색기의 내용 영역, ANSI 16색은 VS Code의 다크·라이트 기본값(M7 설계 표 8).
+// 터미널 색표: 바탕은 탐색기의 내용 영역, ANSI 16색은 VS Code의 다크·라이트 기본값(M7).
 const themes = {
   dark: {
     background: '#191919', foreground: '#cccccc', cursor: '#cccccc', selectionBackground: '#264f78',
@@ -65,7 +65,7 @@ const terms = new Map();
 let active = 0;
 const tabsEl = document.getElementById('tabs');
 
-// 같은 크기를 두 번 보내지 않는다. sill-host는 같은 크기를 "화면을 다시 그려 달라"(새 페이지)로 읽는다(M6 설계 3.3절).
+// 같은 크기를 두 번 보내지 않는다. sill-host는 같은 크기를 "화면을 다시 그려 달라"(새 페이지)로 읽는다(M6).
 const sendSize = t => {
   const r = t.term.cols + ',' + t.term.rows;
   if (r !== t.sentSize) host.postMessage('r' + t.id + ' ' + (t.sentSize = r));
@@ -82,7 +82,7 @@ const restart = t => {
 };
 
 // Windows Terminal과 같게: Ctrl+C는 선택이 있으면 복사, 없으면 ^C. Ctrl+V는 브라우저 붙여넣기(xterm.js가 paste 이벤트를 처리).
-// 그 밖에는 VS Code의 기본 키(M6 설계 표 2, M9 설계 표 6). Ctrl+`, Ctrl+Shift+`는 상주 프로세스가 먼저 받는다. Shift+PageUp/PageDown은 xterm.js가 스크롤한다.
+// 그 밖에는 VS Code의 기본 키(M6, M9). Ctrl+`, Ctrl+Shift+`는 상주 프로세스가 먼저 받는다. Shift+PageUp/PageDown은 xterm.js가 스크롤한다.
 const keys = {
   'Comma': () => host.postMessage('s'),
   'Home': t => t.term.scrollToTop(),
@@ -105,6 +105,12 @@ function create(id) {
     cursorBlink: true,
     theme: theme(),
     minimumContrastRatio: 4.5,    // 흰 바탕의 PSReadLine 노란 명령어 등, 대비가 낮은 글자만 진하게(VS Code 기본값)
+    // OSC 8 링크(http·https만)는 Ctrl+클릭으로 band가 기본 브라우저에서 연다. 핸들러가 없으면 xterm.js가 확인 창 뒤 WebView2 팝업을 연다(0.1.1).
+    linkHandler: {
+      activate: (e, uri) => { if (e.ctrlKey) host.postMessage('u' + uri); },
+      hover: (e, uri) => { el.title = uri + '\nCtrl+click to follow link'; },
+      leave: () => { el.removeAttribute('title'); },
+    },
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -116,7 +122,7 @@ function create(id) {
   const t = { id, term, fit, el, tab, title: tab.firstChild, shellName: '', ended: false, newCommand: true, prompts: [], sentSize: '' };
   terms.set(id, t);
 
-  // 탭 제목은 Windows Terminal처럼 프로그램이 보낸 제목(OSC 0·2)이다. 첫 제목은 sill-host가 준 셸 이름이고(M7 설계 3.4절),
+  // 탭 제목은 Windows Terminal처럼 프로그램이 보낸 제목(OSC 0·2)이다. 첫 제목은 sill-host가 준 셸 이름이고(M7),
   // 프로그램이 제목을 지우면 셸 이름으로 돌아간다. cmd는 첫 제목부터 "cmd - prompt …"처럼 실행 중인 명령을 붙이므로 뗀다.
   term.onTitleChange(s => {
     if (!t.shellName) t.shellName = s.replace(/ - .*$/, '');
@@ -143,7 +149,7 @@ function create(id) {
   term.onData(d => { if (d.includes('\r') || d.includes('\x03')) t.newCommand = true; });
   term.parser.registerOscHandler(133, data => {
     if (data[0] === 'A' && t.newCommand) {
-      // 스크롤백에서 밀려나면 표식이 없어지므로 배열에서도 뺀다(M10 설계 3.6절).
+      // 스크롤백에서 밀려나면 표식이 없어지므로 배열에서도 뺀다(M10).
       const marker = term.registerMarker(0);
       if (marker) { t.prompts.push(marker); marker.onDispose(() => t.prompts.splice(t.prompts.indexOf(marker), 1)); }
       t.newCommand = false;
@@ -175,7 +181,7 @@ function activate(id, tell) {
   const t = terms.get(id);
   if (!t) return;
   active = id;
-  t.fit.fit();    // 숨은 동안의 패널 크기 변경은 보이게 될 때 맞춘다(M10 설계 3.4절)
+  t.fit.fit();    // 숨은 동안의 패널 크기 변경은 보이게 될 때 맞춘다(M10)
   for (const u of terms.values()) {
     u.el.classList.toggle('active', u === t);
     u.tab.classList.toggle('active', u === t);
@@ -196,7 +202,7 @@ function close(id) {
   remove(id);
 }
 
-// 활성 탭이 없어지면 오른쪽(없으면 왼쪽) 탭으로 간다(M9 설계 3.6절).
+// 활성 탭이 없어지면 오른쪽(없으면 왼쪽) 탭으로 간다(M9).
 function remove(id) {
   const t = terms.get(id);
   if (!t) return;
@@ -226,7 +232,7 @@ host.addEventListener('message', e => {
   else if (m[0] === 'o') t.term.write(m.slice(space + 1));
   else if (m[0] === 'x' && !t.ended) {
     t.ended = true;
-    // 셸이 끝났으면 sill-host가 종료 줄을 먼저 보냈다(M6 설계 표 8). sill-host가 그냥 끊겼으면 줄 중간일 수 있다.
+    // 셸이 끝났으면 sill-host가 종료 줄을 먼저 보냈다(M6). sill-host가 그냥 끊겼으면 줄 중간일 수 있다.
     t.term.write((t.term.buffer.active.cursorX ? '\r\n' : '') + '\x1b[90mPress any key to restart.\x1b[0m\r\n');
   }
 });
@@ -240,7 +246,7 @@ window.addEventListener('focus', () => { const t = terms.get(active); if (t) t.t
 // WebView2는 Windows 앱 모드를 prefers-color-scheme으로 준다. band는 모드 변경을 받지 못하므로 t로 알린다.
 const applyTheme = () => { for (const t of terms.values()) t.term.options.theme = theme(); host.postMessage('t'); };
 lightMode.addEventListener('change', applyTheme);
-// 패널 크기가 바뀌면 보이는 터미널만 맞춘다. 끄는 동안 모든 sill-host에 크기 변경이 몰리지 않게 한다(M10 설계 3.4절).
+// 패널 크기가 바뀌면 보이는 터미널만 맞춘다. 끄는 동안 모든 sill-host에 크기 변경이 몰리지 않게 한다(M10).
 new ResizeObserver(() => { const t = terms.get(active); if (t) t.fit.fit(); }).observe(document.body);
 host.postMessage('l');
 applyTheme();

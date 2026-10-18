@@ -129,7 +129,7 @@ namespace Sill.Band
     }
 
     // band를 담는 사이트(shobjidl_core.h). 스타일만 바꾸지만 vtable 순서대로 모두 선언한다.
-    // BSIS_NOCAPTION은 문서에 "제목 글자를 숨김"으로만 있으나, 탐색기의 Explorer Bar에서는 왼쪽 띠 머리와 ×까지 없앤다(M7 설계 2.2절).
+    // BSIS_NOCAPTION은 문서에 "제목 글자를 숨김"으로만 있으나, 탐색기의 Explorer Bar에서는 왼쪽 띠 머리와 ×까지 없앤다(M7).
     [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("4CF504B0-DE96-11D0-8B3F-00A0C911E8E5")]
     public interface IBandSite
     {
@@ -183,7 +183,7 @@ namespace Sill.Band
         [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
 
-        // 탐색기 창(BaseBar)의 서브클래스. 다른 확장과 순서가 꼬이지 않도록 comctl32의 방식을 쓴다(M7 설계 3.2절).
+        // 탐색기 창(BaseBar)의 서브클래스. 다른 확장과 순서가 꼬이지 않도록 comctl32의 방식을 쓴다(M7).
         public delegate IntPtr SubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, UIntPtr uIdSubclass, UIntPtr dwRefData);
         [DllImport("comctl32.dll")] public static extern bool SetWindowSubclass(IntPtr hWnd, SubclassProc pfnSubclass, UIntPtr uIdSubclass, UIntPtr dwRefData);
         [DllImport("comctl32.dll")] public static extern bool RemoveWindowSubclass(IntPtr hWnd, SubclassProc pfnSubclass, UIntPtr uIdSubclass);

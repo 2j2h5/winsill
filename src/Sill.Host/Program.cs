@@ -14,19 +14,19 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Sill.Host
 {
-    // band 하나에 붙는 셸 세션(M1 설계 3.3절). band가 준 이름으로 파이프 서버를 열고, 첫 r 메시지에서 ConPTY로 셸을 시작한다.
+    // band 하나에 붙는 셸 세션(M1). band가 준 이름으로 파이프 서버를 열고, 첫 r 메시지에서 ConPTY로 셸을 시작한다.
     // 자기 자신을 KILL_ON_JOB_CLOSE 작업 개체에 넣으므로, 이 프로세스가 어떻게 끝나든 셸과 그 자식이 함께 종료된다.
     static class Program
     {
         static void Log(string format, params object[] args) { Shared.Log("host.log", format, args); }
 
-        // 셸 통합이 Sill의 cd 경로를 읽는 파일. 키 처리기를 등록한 셸 통합이 만든다(M6 설계 3.4절).
+        // 셸 통합이 Sill의 cd 경로를 읽는 파일. 키 처리기를 등록한 셸 통합이 만든다(M6).
         static readonly string KeyFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             string.Format(@"Sill\cd-{0}.txt", Process.GetCurrentProcess().Id));
 
         static int Main(string[] args)
         {
-            // keys: 단축키 상주 프로세스, open: 오른쪽 클릭 메뉴(M6 설계 3.1·3.7절). 그 밖에는 band가 준 파이프 이름이다.
+            // keys: 단축키 상주 프로세스, open: 오른쪽 클릭 메뉴(M6). 그 밖에는 band가 준 파이프 이름이다.
             // 인수가 없으면(bin에서 더블클릭) 할 일이 없다(M8).
             if (args.Length == 0) return 0;
             if (args[0] == "keys") return Keys.Run();
@@ -44,7 +44,7 @@ namespace Sill.Host
             Environment.Exit(0);
         }
 
-        // 강제로 끝난 sill-host는 cd 파일을 지우지 못한다. 끝난 PID의 파일만 지운다. 살아 있는 세션의 파일을 지우면 그 세션의 cd 숨김이 꺼진다(M5 설계 3.4절).
+        // 강제로 끝난 sill-host는 cd 파일을 지우지 못한다. 끝난 PID의 파일만 지운다. 살아 있는 세션의 파일을 지우면 그 세션의 cd 숨김이 꺼진다(M5).
         static void DeleteStaleKeyFiles()
         {
             try
@@ -61,19 +61,24 @@ namespace Sill.Host
             catch (Exception e) { Log("cd 파일 정리 실패: {0}", e.Message); }
         }
 
-        // shellArg: 셸 값(host-check용). 없으면 settings.json을 따른다(M4 설계 3.4절).
+        // shellArg: 셸 값(host-check용). 없으면 settings.json을 따른다(M4).
         static void Run(string pipeName, string shellArg)
         {
-            Log("시작 pipe={0}", pipeName);
+            Log("시작 {0} pipe={1}", Shared.Version, pipeName);
             KillChildrenOnExit();
             DeleteStaleKeyFiles();
             File.Delete(KeyFile);
             Environment.SetEnvironmentVariable("SILL_CD", KeyFile);   // 셸이 물려받는다
-            // 파이프는 현재 사용자만 연다. 기본 DACL은 Everyone에게 읽기를 준다(M8 설계 3.5절).
+            // 셸 통합만 아는 난수. 셸 통합이 읽고 바로 지우므로 셸이 띄우는 프로그램은 모른다. Sync가 이것으로 진짜 프롬프트를 가린다.
+            var nonce = new byte[16];
+            using (var rng = new System.Security.Cryptography.RNGCryptoServiceProvider()) rng.GetBytes(nonce);
+            string nonceHex = BitConverter.ToString(nonce).Replace("-", "").ToLowerInvariant();
+            Environment.SetEnvironmentVariable("SILL_NONCE", nonceHex);
+            // 파이프는 현재 사용자만 연다. 기본 DACL은 Everyone에게 읽기를 준다(M8).
             var security = new PipeSecurity();
             security.AddAccessRule(new PipeAccessRule(WindowsIdentity.GetCurrent().User, PipeAccessRights.FullControl, AccessControlType.Allow));
             // Asynchronous: 읽기(이 스레드)와 쓰기(출력 스레드)가 같은 핸들에서 서로 막지 않게 한다.
-            // 버퍼가 0이면 이 스레드가 읽지 않는 동안(셸을 띄우는 동안, 최대 약 2 s) band의 쓰기, 곧 탐색기 UI 스레드가 막힌다(M10 설계 3.3절).
+            // 버퍼가 0이면 이 스레드가 읽지 않는 동안(셸을 띄우는 동안, 최대 약 2 s) band의 쓰기, 곧 탐색기 UI 스레드가 막힌다(M10).
             using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Message, PipeOptions.Asynchronous, 65536, 65536, security))
             {
                 var wait = pipe.BeginWaitForConnection(null, null);
@@ -83,14 +88,14 @@ namespace Sill.Host
                 Pty pty = null;
                 Shell shell = null;
                 short cols = 0, rows = 0;
-                var sync = new Sync();
-                // 출력 보내기 스레드: 16 ms에 한 번까지. 쉬는 동안 온 출력은 다음 메시지에 함께 간다(M8 설계 3.1절).
+                var sync = new Sync(nonceHex);
+                // 출력 보내기 스레드: 16 ms에 한 번까지. 쉬는 동안 온 출력은 다음 메시지에 함께 간다(M8).
                 new Thread(() =>
                 {
                     try { while (true) { OutReady.WaitOne(); Flush(pipe); Thread.Sleep(16); } }
                     catch (Exception e) { Log("보내기 중단: {0}", e.Message); }
                 }) { IsBackground = true }.Start();
-                // 셸이 시작된 뒤의 c는 작업 스레드가 받은 순서대로 처리한다. 끊긴 네트워크 경로의 폴더 확인(약 21 s)이 입력을 막지 않게 한다(M8 설계 3.3절).
+                // 셸이 시작된 뒤의 c는 작업 스레드가 받은 순서대로 처리한다. 끊긴 네트워크 경로의 폴더 확인(약 21 s)이 입력을 막지 않게 한다(M8).
                 var folders = new BlockingCollection<string>();
                 new Thread(() =>
                 {
@@ -112,7 +117,7 @@ namespace Sill.Host
                         short c = short.Parse(size[0]), r = short.Parse(size[1]);
                         if (pty != null)
                         {
-                            // 같은 크기는 새 페이지(WebView2 복구)뿐이다. ConPTY는 크기가 바뀌면 화면을 다시 보내므로 한 칸 바꿨다 되돌린다(M6 설계 3.3절).
+                            // 같은 크기는 새 페이지(WebView2 복구)뿐이다. ConPTY는 크기가 바뀌면 화면을 다시 보내므로 한 칸 바꿨다 되돌린다(M6).
                             // 화면과 달리 창 제목은 다시 오지 않으므로 마지막 제목을 먼저 보낸다(M7).
                             if (c == cols && r == rows)
                             {
@@ -140,10 +145,10 @@ namespace Sill.Host
                         try { pty = Pty.Start(shell.CommandLine, shell.Title, cols, rows, dir); }
                         catch (Win32Exception e) { notice("Cannot start the shell: " + shell.Name + " (" + e.Message + ")"); Flush(pipe); pipe.WaitForPipeDrain(); return; }
                         Log("셸 시작 {0} pid={1} {2}x{3} {4}", shell.Name, pty.Process.Id, cols, rows, dir);
-                        // ConPTY는 셸이 첫 화면을 그릴 때에야 시작 제목을 보낸다(powershell 1.9 s). 그동안 탭이 비지 않게 먼저 보낸다(M10 설계 3.2절).
+                        // ConPTY는 셸이 첫 화면을 그릴 때에야 시작 제목을 보낸다(powershell 1.9 s). 그동안 탭이 비지 않게 먼저 보낸다(M10).
                         sync.Title = shell.Title;
                         Out("\x1b]0;" + shell.Title + "\x07");
-                        sync.Started(pty, shell.Cd, KeyFile);
+                        sync.Started(pty.Write, shell.Cd, KeyFile);
                         var started = pty;
                         new Thread(() => Pump(started, pipe, sync)) { IsBackground = true }.Start();
                         new Thread(() =>
@@ -151,13 +156,13 @@ namespace Sill.Host
                             started.Process.WaitForExit();
                             int code = started.TakeExitCode();
                             Log("셸 끝남 code={0}", code);
-                            // Windows Terminal의 종료 줄 모양(M6 설계 표 8). 셸의 마지막 출력이 먼저 가도록 잠깐 기다린다.
+                            // Windows Terminal의 종료 줄 모양(M6). 셸의 마지막 출력이 먼저 가도록 잠깐 기다린다.
                             Thread.Sleep(100);
                             try
                             {
                                 Out(string.Format("\r\n\x1b[90m[process exited with code {0} (0x{0:X8})]\x1b[0m\r\n", code));
                                 Flush(pipe);
-                                // band는 코드가 0이면 그 탭을 닫는다(VS Code와 같음, M9 설계 3.6절).
+                                // band는 코드가 0이면 그 탭을 닫는다(VS Code와 같음, M9).
                                 Shared.Write(pipe, "e" + code);
                                 pipe.WaitForPipeDrain();
                             }
@@ -178,7 +183,7 @@ namespace Sill.Host
             return check.Wait(ms) && check.Result;
         }
 
-        // 보낼 출력. 출력 조각마다 메시지를 보내면 탐색기의 band가 메시지마다 UI 스레드를 깨운다(대량 출력 중 탐색기 CPU 57 %, M8 설계 2.2절).
+        // 보낼 출력. 출력 조각마다 메시지를 보내면 탐색기의 band가 메시지마다 UI 스레드를 깨운다(대량 출력 중 탐색기 CPU 57 %, M8).
         static readonly StringBuilder Pending = new StringBuilder();
         static readonly AutoResetEvent OutReady = new AutoResetEvent(false);
 
@@ -216,7 +221,7 @@ namespace Sill.Host
                     string moved = sync.Output(text);
                     Out(text);
                     if (moved == null) continue;
-                    // 없는 경로로 이동하면 탐색기가 오류 창을 띄운다(M2 결과 3.3절).
+                    // 없는 경로로 이동하면 탐색기가 오류 창을 띄운다(M2).
                     if (!Directory.Exists(moved)) { Log("p 건너뜀(폴더 아님) {0}", moved); continue; }
                     Flush(pipe);
                     Shared.Write(pipe, "p" + moved);
@@ -226,7 +231,7 @@ namespace Sill.Host
             catch (Exception e) { Log("출력 중단: {0}", e.Message); }
         }
 
-        // Ctrl+,(M6 설계 3.6절). 파일이 없으면 빈 shell(자동 선택)로 만든다. 지금 셸 값을 쓰면 자동 선택이 꺼진다(M8).
+        // Ctrl+,(M6). 파일이 없으면 빈 shell(자동 선택)로 만든다. 지금 셸 값을 쓰면 자동 선택이 꺼진다(M8).
         // 메모장은 band가 띄운다. 이 프로세스의 자식은 작업 개체와 함께 끝나기 때문이다.
         static void OpenSettings(PipeStream pipe)
         {
@@ -264,7 +269,7 @@ namespace Sill.Host
         IntPtr _hpc;
         IntPtr _process;
 
-        // 셸이 끝난 뒤 한 번 부른다. 종료 코드를 읽고 프로세스 핸들을 닫는다(4차 리뷰 B6, M11).
+        // 셸이 끝난 뒤 한 번 부른다. 종료 코드를 읽고 프로세스 핸들을 닫는다(M11).
         public int TakeExitCode()
         {
             uint code;
@@ -291,7 +296,7 @@ namespace Sill.Host
             var si = new Native.STARTUPINFOEX();
             si.StartupInfo.cb = Marshal.SizeOf(si);
             si.lpAttributeList = Marshal.AllocHGlobal(listSize);
-            // ConPTY는 셸이 제목을 정하기 전에 시작 제목을 OSC 0으로 보낸다. 없으면 실행 파일의 전체 경로다(M7 설계 표 6).
+            // ConPTY는 셸이 제목을 정하기 전에 시작 제목을 OSC 0으로 보낸다. 없으면 실행 파일의 전체 경로다(M7).
             si.StartupInfo.lpTitle = Marshal.StringToHGlobalUni(title);
             try
             {

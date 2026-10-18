@@ -1,17 +1,20 @@
 ﻿# bin\ 빌드. .NET SDK 없이 Windows에 들어 있는 csc.exe(C# 5)를 쓴다.
-# 외부 의존성은 고정 버전을 deps\에 한 번만 받는다(M1 설계 표 4).
+# 외부 의존성은 고정 버전을 deps\에 한 번만 받고, 받을 때 SHA-256으로 확인한다. 다르면 아무것도 건드리기 전에 멈춘다.
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $out = Join-Path $root 'bin'
 $deps = Join-Path $root 'deps'
 
-function Get-Dep([string]$name, [string]$url) {
+function Get-Dep([string]$name, [string]$url, [string]$sha256) {
     $dir = Join-Path $deps $name
     if (-not (Test-Path $dir)) {
         $tmp = "$dir.tmp"
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
         New-Item -ItemType Directory -Force $tmp | Out-Null
         Invoke-WebRequest -UseBasicParsing $url -OutFile "$tmp.pkg"
+        if ((Get-FileHash "$tmp.pkg").Hash -ne $sha256) {
+            Remove-Item $tmp, "$tmp.pkg" -Recurse -Force; throw "해시가 다름: $name"
+        }
         tar -xf "$tmp.pkg" -C $tmp    # nupkg(zip)와 npm tgz를 모두 bsdtar로 푼다
         if ($LASTEXITCODE) { throw "압축 풀기 실패: $url" }
         Remove-Item "$tmp.pkg"
@@ -20,9 +23,27 @@ function Get-Dep([string]$name, [string]$url) {
     $dir
 }
 
-$wv2 = Get-Dep 'webview2-1.0.4258.31' 'https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4258.31/microsoft.web.webview2.1.0.4258.31.nupkg'
-$xterm = Get-Dep 'xterm-6.0.0' 'https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz'
-$fit = Get-Dep 'addon-fit-0.11.0' 'https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.11.0.tgz'
+$wv2 = Get-Dep 'webview2-1.0.4258.31' 'https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4258.31/microsoft.web.webview2.1.0.4258.31.nupkg' '56F7F4B8BF9AEE4B8EFEFBBDD4F67D5F74EBD1B100ED0806DA71BF76AF481AA9'
+$xterm = Get-Dep 'xterm-6.0.0' 'https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz' '908E66E04AF6C8DC6B00DD3B54DE088E2E81E5ED866284FD6C2FB3C2D1C7A3F6'
+$fit = Get-Dep 'addon-fit-0.11.0' 'https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.11.0.tgz' '26003B4517A132B64E4FF228FD88A5FDA3FFF5E606C76093F6DCFF772E9ECEC0'
+
+$csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+
+# 단위 시험. 실패하면 탐색기 창을 닫거나 bin을 건드리기 전에 멈춘다.
+$test = Join-Path $env:TEMP 'sill-sync-test.exe'
+& $csc /nologo /codepage:65001 /platform:x64 /out:"$test" "$root\tests\SyncTest.cs" "$root\src\Sill.Host\Sync.cs"
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+& $test
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+Remove-Item $test
+
+# Session 단위 시험(보내기 큐, sill-host를 띄우지 못함). 자신을 가짜 sill-host로 띄운다. SILL_TEST: band.log에 쓰지 않음.
+$test = Join-Path $env:TEMP 'sill-session-test.exe'
+& $csc /nologo /codepage:65001 /platform:x64 /define:SILL_TEST /nowarn:169 /r:System.Windows.Forms.dll /out:"$test" "$root\tests\SessionTest.cs" "$root\src\Sill.Band\Session.cs" "$root\src\Shared.cs"
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+& $test
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+Remove-Item $test
 
 New-Item -ItemType Directory -Force "$out\web" | Out-Null
 
@@ -37,8 +58,7 @@ Get-CimInstance Win32_Process -Filter "Name='explorer.exe' or Name='sill-host.ex
 Remove-Item "$out\*.old" -ErrorAction SilentlyContinue
 if (Test-Path "$out\Sill.Band.dll") { Move-Item "$out\Sill.Band.dll" ("$out\Sill.Band.{0:yyyyMMddHHmmss}.old" -f (Get-Date)) }
 
-$csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-$core = "$wv2\lib\net462\Microsoft.Web.WebView2.Core.dll"
+$core ="$wv2\lib\net462\Microsoft.Web.WebView2.Core.dll"
 & $csc /nologo /codepage:65001 /target:library /platform:x64 /optimize `
     /out:"$out\Sill.Band.dll" /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:"$core" `
     (Get-ChildItem "$root\src\Sill.Band\*.cs").FullName "$root\src\Shared.cs"

@@ -8,9 +8,9 @@ using System.Threading;
 
 namespace Sill.Host
 {
-    // 단축키 상주 프로세스(sill-host.exe keys)와 오른쪽 클릭 메뉴(sill-host.exe open). M6 설계 3.1·3.7절.
+    // 단축키 상주 프로세스(sill-host.exe keys)와 오른쪽 클릭 메뉴(sill-host.exe open). M6.
     // 탐색기 창이 전경일 때만 Ctrl+`, Ctrl+Shift+`를 등록하므로 다른 앱의 같은 키는 막지 않는다.
-    // 활성 탭에 band 창이 있으면(패널이 닫혀 숨어 있어도) Sill.Key 메시지를 보내고, band가 포커스·열기·새 터미널을 정한다(M9 설계 3.4절).
+    // 활성 탭에 band 창이 있으면(패널이 닫혀 숨어 있어도) Sill.Key 메시지를 보내고, band가 포커스·열기·새 터미널을 정한다(M9).
     // band 창이 없으면(이 탭에서 처음 여는 패널) COM으로 열기만 한다. 그러면 band가 첫 터미널을 만든다.
     static class Keys
     {
@@ -28,7 +28,7 @@ namespace Sill.Host
             using (new Mutex(true, @"Local\Sill.Keys", out created))
             {
                 if (!created) { Log("이미 실행 중"); return 0; }
-                Log("시작");
+                Log("시작 {0}", Shared.Version);
                 InSta(() =>
                 {
                     const uint EVENT_SYSTEM_FOREGROUND = 3, WINEVENT_OUTOFCONTEXT = 0, WM_HOTKEY = 0x312, WM_TIMER = 0x113;
@@ -50,7 +50,7 @@ namespace Sill.Host
         }
 
         // 오른쪽 클릭 메뉴: 메뉴를 연 탐색기 창이 전경이다. 이미 열려 있으면 닫지 않고 포커스만 준다.
-        // 바탕 화면처럼 탐색기 창 밖이면 그 폴더로 탐색기를 열고 패널을 켠다(Open in Terminal과 같음, M8 설계 3.6절).
+        // 바탕 화면처럼 탐색기 창 밖이면 그 폴더로 탐색기를 열고 패널을 켠다(Open in Terminal과 같음, M8).
         public static int Open(string folder)
         {
             Log("메뉴 {0}", folder);
@@ -150,7 +150,7 @@ namespace Sill.Host
         // 활성 탭은 z-순서에서 가장 위의 탭 창이다. Windows 11은 비활성 탭 창도 숨기지 않아 IsWindowVisible로는 가릴 수 없다(M6 시험).
         static IntPtr ActiveTabWindow(IntPtr frame) { return Native.FindWindowEx(frame, IntPtr.Zero, "ShellTabWindowClass", null); }
 
-        // band 창은 활성 탭 창 안의, 제목이 "Sill"인 WinForms 창이다. 패널이 닫혀 있으면 숨은 채 남는다(M9 설계 표 2).
+        // band 창은 활성 탭 창 안의, 제목이 "Sill"인 WinForms 창이다. 패널이 닫혀 있으면 숨은 채 남는다(M9).
         static IntPtr FindBand(IntPtr frame)
         {
             IntPtr found = IntPtr.Zero;
@@ -164,7 +164,7 @@ namespace Sill.Host
             return found;
         }
 
-        // 탭마다 IWebBrowser2가 있고 HWND는 모두 같은 창이다. 셸 브라우저 창이 활성 탭 창인 것을 고른다(설계 표 11의 첫 위험).
+        // 탭마다 IWebBrowser2가 있고 HWND는 모두 같은 창이다. 셸 브라우저 창이 활성 탭 창인 것을 고른다(M6).
         static object ActiveTab(IntPtr frame)
         {
             IntPtr active = ActiveTabWindow(frame);

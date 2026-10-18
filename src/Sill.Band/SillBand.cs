@@ -266,7 +266,7 @@ namespace Sill.Band
                 Log("터미널 {0} 셸 끝남 code={1}", id, m.Substring(1));
                 if (m == "e0") { CloseTerminal(id, "exit"); Post("-" + id); }
             }
-            else Post(m[0] + id.ToString() + " " + m.Substring(1));
+            else Post(m.Insert(1, id + " "));     // 출력은 클 수 있으므로 복사를 한 번만 한다
         }
 
         // --- 단축키와 오른쪽 클릭 메뉴(M6 설계 표 4): 상주 프로세스가 활성 탭의 band 창에 보낸다 ---
@@ -434,8 +434,17 @@ namespace Sill.Band
             Session session;
             if (_browser == null || !_terms.TryGetValue(id, out session)) return;
             // 표 1: Document.Folder.Self.Path는 파일 시스템 경로를 그대로, 가상 폴더는 ::{GUID}로 준다.
-            object self = Get(Get(Get(_browser, "Document"), "Folder"), "Self");
-            string path = Get(self, "Path") as string;
+            // 얻은 COM 개체는 바로 놓는다. 두면 탐색할 때마다 지난 폴더의 보기가 GC 때까지 남는다(M10 설계 3.6절).
+            object doc = null, folder = null, self = null;
+            string path;
+            try
+            {
+                doc = Get(_browser, "Document");
+                folder = Get(doc, "Folder");
+                self = Get(folder, "Self");
+                path = Get(self, "Path") as string;
+            }
+            finally { Release(self); Release(folder); Release(doc); }
             Log("{0} 폴더 {1}", why, path);
             if (string.IsNullOrEmpty(path) || path.StartsWith("::")) return;
             session.Send("c" + path);
@@ -444,6 +453,11 @@ namespace Sill.Band
         static object Get(object o, string name)
         {
             return o.GetType().InvokeMember(name, BindingFlags.GetProperty, null, o, null);
+        }
+
+        static void Release(object o)
+        {
+            if (o != null && Marshal.IsComObject(o)) Marshal.ReleaseComObject(o);
         }
 
         public int GetSite(ref Guid riid, out IntPtr ppvSite)
@@ -551,7 +565,8 @@ namespace Sill.Band
 
         void DestroyView()
         {
-            if (_events != null) { Safe("Unadvise", () => _events.Unadvise(_cookie)); _events = null; }
+            if (_events != null) { Safe("Unadvise", () => _events.Unadvise(_cookie)); Release(_events); _events = null; }
+            Release(_browser);
             _browser = null;
             foreach (var s in _terms.Values) s.Dispose();
             _terms.Clear();

@@ -24,7 +24,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
 - 설정: `%LOCALAPPDATA%\Sill\settings.json`의 `{"shell": "..."}` 하나(powershell, pwsh, cmd, gitbash, 그 밖에는 명령줄 그대로). 없으면 pwsh가 PATH에 있으면 pwsh, 아니면 powershell. sill-host가 세션을 시작할 때마다 읽는다. 파일이 없을 때 `Ctrl+,`는 `{"shell": ""}`(빈 값 = 자동 선택)로 만든다(M8). 개발자의 PC에는 이 파일이 없다(시험 뒤 지울 것). 패널 높이는 탐색기가 끌기 직후 `Explorer Bars\{CLSID}\BarSize`(패널 높이 + 4 px)에 직접 저장한다(M4).
 - 작업 표시줄 explorer가 예전 DLL을 잡고 있으면 build.ps1이 `bin\Sill.Band.*.old`로 이름을 바꿔 치운다.
 - 개발 중에는 `HKCU\...\Explorer\Advanced\SeparateProcess=1`이 켜져 있다(원래 값 0). 새 폴더 창은 `explorer.exe /factory,...` 프로세스에서 열리므로 band가 죽어도 작업 표시줄은 살아남는다. 이 설정 전에 열려 있던 창은 작업 표시줄 프로세스에 있으니 시험에 쓰지 않는다.
-- 자동화 테스트는 host-check.ps1 하나다(M1 입출력·정리 + M2 상태 판정 + M3 `p`·되먹임 목록 + M4 셸별 항목 + M6 cd 숨김·같은 크기 `r` 다시 그리기·종료 줄 + M7 같은 크기 `r` 뒤 제목 + M8 출력 묶기·되울림 지연·파이프 ACL·PS1을 매번 쓰는 `.bashrc`(Git Bash 시험 HOME)·낡은 되먹임 항목·끊긴 네트워크 경로(`\\192.0.2.x\x`, 약 21 s) 뒤 입력·끊긴 시작 폴더 + M9 종료 줄 뒤 `e0`). sill-host의 두 번째 인수로 셸을 주므로 settings.json을 건드리지 않는다. 나머지 확인은 PowerShell `Shell.Application.Windows()`로 창을 잡아 `ShowBrowserBar`·`Navigate2`를 부르고, band.log·host.log와 `PrintWindow` 캡처로 한다.
+- 자동화 테스트는 host-check.ps1 하나다(M1 입출력·정리 + M2 상태 판정 + M3 `p`·되먹임 목록 + M4 셸별 항목 + M6 cd 숨김·같은 크기 `r` 다시 그리기·종료 줄 + M7 같은 크기 `r` 뒤 제목 + M8 출력 묶기·되울림 지연·파이프 ACL·PS1을 매번 쓰는 `.bashrc`(Git Bash 시험 HOME)·낡은 되먹임 항목·끊긴 네트워크 경로(`\\192.0.2.x\x`, 약 21 s) 뒤 입력·끊긴 시작 폴더 + M9 종료 줄 뒤 `e0` + M10 시작 제목 0.3 s 이하·셸을 띄우는 동안 band 쪽 쓰기 10 ms 이하). sill-host의 두 번째 인수로 셸을 주므로 settings.json을 건드리지 않는다. 나머지 확인은 PowerShell `Shell.Application.Windows()`로 창을 잡아 `ShowBrowserBar`·`Navigate2`를 부르고, band.log·host.log와 `PrintWindow` 캡처로 한다.
 - `Navigate2`에는 **존재하는 경로만** 넘긴다. 없는 경로면 탐색기가 개발자 화면에 "경로 또는 주소가 정확한지 확인" 오류 창을 띄우고 0x800704C7을 돌려준다(M2에서 겪음. 빈 폴더는 `Compress-Archive`가 zip에 넣지 않는 것도 원인이었다). `powershell -File`에 배열 인수를 넘기면 하나의 문자열로 합쳐지는 것도 주의한다. `Navigate2`의 새 탭 플래그(0x800)는 무시되므로, 탭이 필요한 시험은 개발자에게 + 버튼 클릭을 부탁한다.
 - **패널에 SendInput으로 키를 보내는 시험은 포커스가 band 창의 자손인지 키마다 확인한 뒤에만 한다.** 탐색기 창 안 어딘가로만 확인하면 키가 파일 목록으로 가서 실제 파일 작업(복사·삭제·창 닫기)이 일어난다(M1에서 겪음). WebView2의 포커스 창은 msedgewebview2 스레드에 있으므로 패널 자손 창들의 스레드마다 `GetGUIThreadInfo`로 본다. 개발자가 다른 창을 쓰는 중이면 전경 잠금 때문에 시험 창을 앞으로 가져올 수 없으니, 패널 클릭을 부탁하고 기다린다. 클릭 뒤 시험이 끝날 때까지 다른 창으로 옮기지 말아 달라고도 부탁한다(M3에서 클릭 직후 개발자가 다른 창으로 가서 한 번 멈춤).
 - 시험 스크립트의 `Navigate2`도 파일 목록에 포커스를 가져간다. 그 뒤 키를 보내려면, 시험 창이 전경이고 `WindowFromPoint`가 band(또는 자식) 창일 때만 패널 아래쪽을 마우스로 클릭해 포커스를 되찾는다(M4). 패널에서 `exit`로 셸을 바꿀 때는 band.log의 `sill-host 끊김`을 본 뒤에 다시 시작 키를 보낸다(먼저 보내면 끝나 가는 셸이 먹는다).
@@ -51,6 +51,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
   - 시험 스크립트가 연 새 탐색기 창은 대개 바로 전경이고 패널에 포커스가 있다. 그래도 키마다 포커스 확인은 한다.
   - `IWebBrowser2.Width`로 창 폭을 바꾸면 탐색기가 패널을 닫는다(`ShowDW(False)`). 창 크기는 `SetWindowPos`로 바꾼다.
   - Segoe Fluent Icons의 +(E710)는 10 px에서 ClearType 색 번짐이 캡처에 분홍으로 보였다. 12 px로 그린다.
+- M10 시험에서 배운 것:
+  - 새 터미널의 시간은 대부분 셸 자신이다(개발자 PC의 powershell 첫 프롬프트 1.8 s 중 약 1.45 s가 프로필의 conda 초기화). Sill의 몫은 셸 실행까지 약 0.1 s다. 셸을 미리 띄워 두는 예비 터미널은 개발자가 하지 않기로 했다.
+  - WebView2 브라우저 프로세스는 같은 데이터 폴더를 쓰는 모든 탐색기 프로세스가 함께 쓴다(부모는 처음 만든 탐색기 프로세스). 복구 시험은 데이터 폴더로 브라우저를 찾고, 렌더러는 시험 창을 연 뒤 새로 생긴 것만 끈다. 다른 band의 렌더러를 끈 적이 있다.
+  - 개발자가 시험 창에 탭을 더해 자기 폴더를 열 수 있다. 시험 창을 닫기 전에 탭이 하나인지 보고, 여럿이면 `Quit`하지 않는다. 시험 폴더를 지우기 전에도 그 폴더를 보는 창이 없는지 본다.
+  - 시험 스크립트는 탐색기를 열기 전에 폴더가 있는지 본다. 없는 폴더로 `explorer.exe`를 열면 오류 창 대신 "문서" 창이 열렸다.
+  - 탭·+·× 좌표는 band 창 폭(탐색기 창보다 16 px 좁음)과 지금 탭 폭(200 px, M9 결과 리뷰에서 바뀜)으로 계산한다. 예전 값으로 계산해 시험이 엉뚱한 곳을 누른 적이 두 번 있다.
 
 ## 프로젝트 개요
 
@@ -72,9 +78,10 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
 - Band는 `IDeskBand`, `IObjectWithSite`, `IInputObject`를 구현한다. 켜고 끄는 것은 `IWebBrowser2::ShowBrowserBar`로 한다.
 - 키 입력은 WebView2(msedgewebview2.exe) 창이 받으므로 탐색기가 가로채지 않는다(M1에서 키 24개로 확인). `TranslateAcceleratorIO`는 아무것도 하지 않는다(키 로그는 M8에서 지움).
 - band ↔ sill-host는 메시지 모드 named pipe, UTF-8 문자열, 첫 글자가 종류(r 크기, i 입력, o 출력, c 탐색기 폴더, p 셸 폴더, s 설정 파일, e 셸의 종료 코드; band가 직접 처리하는 것은 p, s(메모장은 band가 띄움: sill-host의 자식은 작업 개체와 함께 끝남), e(0이면 그 터미널을 닫음), x 끊김, n 다시 시작, h 탭 줄의 패널 닫기, t 앱 모드 바뀜, l 페이지가 뜸(band가 터미널 목록 `+n`·활성 `an`을 보냄), + 새 터미널, a 활성 터미널, - 터미널 닫기). 페이지와 band 사이에서 한 터미널의 메시지는 종류 글자 뒤에 band가 붙인 번호와 빈칸이 온다(`i2 dir`, `o2 …`). band가 번호를 떼고 붙이며, sill-host 쪽 형식은 그대로다(M9). band는 셸 출력을 해석하지 않는다(`src/Shared.cs`). 셸이 있는데 같은 크기의 r이 오면(WebView2를 다시 만든 새 페이지) sill-host가 ConPTY 크기를 한 칸 바꿨다 되돌려 화면을 다시 받는다. 그래서 페이지는 같은 크기를 두 번 보내지 않는다.
+- sill-host는 셸을 띄우자마자 셸 이름을 OSC 0으로 보낸다. ConPTY는 셸이 첫 화면을 그릴 때에야 `lpTitle`을 보내서 그동안 탭 제목이 비었다(powershell 1.9 s, M10). 파이프 서버 버퍼는 64 KB다. 0이면 sill-host가 읽지 않는 동안(셸을 띄우는 동안, 끊긴 시작 폴더면 약 2 s) band의 쓰기, 곧 탐색기 UI 스레드가 막혔다(M10). band의 Session은 연결을 기다리다 닫혔으면 연결 직후 끝낸다(안 그러면 읽기에서 영원히 기다리고 sill-host가 남음). 로그(`Shared.Log`)는 `FileSystemRights.AppendData`와 `FileShare.ReadWrite | Delete`로 연다. `File.AppendAllText`는 여러 프로세스가 동시에 쓰면 공유 위반으로 줄을 잃었다(4개 × 500줄에 739줄, M10).
 - sill-host는 셸 출력을 16 ms에 한 번까지 o 하나로 묶어 보낸다(조용하던 셸의 첫 출력은 바로). 조각마다 보내면 대량 출력 중 탐색기 CPU가 한 코어의 57 %였다(M8). p·종료 줄 앞에서는 버퍼를 먼저 비워 순서를 지킨다. 셸이 시작된 뒤의 c는 폴더 작업 스레드가 받은 순서대로 처리한다(끊긴 네트워크 경로의 `Directory.Exists`가 약 21 s 걸려 입력을 막았음). 셸 시작 전의 파이프 읽기 스레드에서 하는 확인은 시간을 제한한다: 시작 폴더는 2 s 안에 답이 없으면 홈, PATH 검색(`OnPath`)은 네트워크 폴더를 건너뜀(M8 후속). `Pty.Write`는 세 스레드(파이프 읽기, 폴더 작업, Pump)가 부르므로 잠근다. 파이프 DACL은 현재 사용자만.
 - WebView2의 브라우저·렌더러 프로세스가 죽으면 band가 컨트롤러를 다시 만든다(10초 안 재실패면 멈춤). 호스트 이름은 `sill.example`이다(`.local`은 이름 풀이로 첫 적재가 2초 늦었다, M6).
-- 세션은 band 수명(SetSite → CloseDW)에 묶이고 터미널마다 하나다(M9). band가 세션 목록(번호 순 = 탭 순)과 활성 번호를 갖는다. 첫 터미널은 SetSite에서, 그 뒤는 +·`Ctrl+Shift+``·터미널이 없는 패널이 보일 때(ShowDW) 만든다. 셸이 코드 0으로 끝나면(exit) 그 탭을 닫고, 0이 아니거나 sill-host가 끊기면 탭에 종료 줄과 "Press any key to restart."를 남긴다. 마지막 탭이 닫히면 패널도 닫는다. 숨은 터미널은 `visibility: hidden`이라 크기를 함께 맞추고 출력도 계속 그린다. sill-host는 자신을 KILL_ON_JOB_CLOSE 작업 개체에 넣어, 어떻게 끝나든 셸과 자식이 함께 종료된다.
+- 세션은 band 수명(SetSite → CloseDW)에 묶이고 터미널마다 하나다(M9). band가 세션 목록(번호 순 = 탭 순)과 활성 번호를 갖는다. 첫 터미널은 SetSite에서, 그 뒤는 +·`Ctrl+Shift+``·터미널이 없는 패널이 보일 때(ShowDW) 만든다. 셸이 코드 0으로 끝나면(exit) 그 탭을 닫고, 0이 아니거나 sill-host가 끊기면 탭에 종료 줄과 "Press any key to restart."를 남긴다. 마지막 탭이 닫히면 패널도 닫는다. 숨은 터미널은 `visibility: hidden`이라 출력을 계속 그린다. 패널 크기가 바뀌면 보이는 터미널만 맞추고, 숨은 터미널은 보이게 될 때 맞춘다(M10, 끄는 동안 모든 sill-host에 크기 변경이 몰리던 것: 터미널 5개 20번에 71 → 20번). sill-host는 자신을 KILL_ON_JOB_CLOSE 작업 개체에 넣어, 어떻게 끝나든 셸과 자식이 함께 종료된다.
 - 스택: C# / .NET Framework 4.8 (COM interop), WebView2, xterm.js, ConPTY. 필요하면 band만 C++로 옮긴다.
 
 ## 폴더 동기화 규칙

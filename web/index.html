@@ -29,7 +29,7 @@
   .x { width: 20px; height: 20px; font-size: 8px; }
   #new { width: 32px; height: 24px; font-size: 12px; }
   #close { width: 32px; height: 24px; margin: 0 4px 0 auto; }
-  /* 터미널은 모두 같은 자리에 겹친다. display: none과 달리 숨은 터미널도 크기를 잴 수 있어 함께 맞춘다(M9 설계 3.3절). */
+  /* 터미널은 모두 같은 자리에 겹친다. display: none과 달리 숨은 터미널도 크기를 잴 수 있어, 보이게 하기 전에 맞춘다(M9 설계 3.3절, M10 설계 3.4절). */
   .term { position: absolute; inset: 30px 0 0 6px; visibility: hidden; }
   .term.active { visibility: visible; }
 </style>
@@ -142,7 +142,12 @@ function create(id) {
   // 셸은 줄을 다시 그릴 때도 133;A를 낼 수 있으므로(긴 입력이 줄바꿈될 때), Enter나 Ctrl+C 뒤의 첫 133;A에만 표식을 남긴다.
   term.onData(d => { if (d.includes('\r') || d.includes('\x03')) t.newCommand = true; });
   term.parser.registerOscHandler(133, data => {
-    if (data[0] === 'A' && t.newCommand) { t.prompts.push(term.registerMarker(0)); t.newCommand = false; }
+    if (data[0] === 'A' && t.newCommand) {
+      // 스크롤백에서 밀려나면 표식이 없어지므로 배열에서도 뺀다(M10 설계 3.6절).
+      const marker = term.registerMarker(0);
+      if (marker) { t.prompts.push(marker); marker.onDispose(() => t.prompts.splice(t.prompts.indexOf(marker), 1)); }
+      t.newCommand = false;
+    }
     return false;
   });
 
@@ -170,6 +175,7 @@ function activate(id, tell) {
   const t = terms.get(id);
   if (!t) return;
   active = id;
+  t.fit.fit();    // 숨은 동안의 패널 크기 변경은 보이게 될 때 맞춘다(M10 설계 3.4절)
   for (const u of terms.values()) {
     u.el.classList.toggle('active', u === t);
     u.tab.classList.toggle('active', u === t);
@@ -234,7 +240,8 @@ window.addEventListener('focus', () => { const t = terms.get(active); if (t) t.t
 // WebView2는 Windows 앱 모드를 prefers-color-scheme으로 준다. band는 모드 변경을 받지 못하므로 t로 알린다.
 const applyTheme = () => { for (const t of terms.values()) t.term.options.theme = theme(); host.postMessage('t'); };
 lightMode.addEventListener('change', applyTheme);
-new ResizeObserver(() => { for (const t of terms.values()) t.fit.fit(); }).observe(document.body);
+// 패널 크기가 바뀌면 보이는 터미널만 맞춘다. 끄는 동안 모든 sill-host에 크기 변경이 몰리지 않게 한다(M10 설계 3.4절).
+new ResizeObserver(() => { const t = terms.get(active); if (t) t.fit.fit(); }).observe(document.body);
 host.postMessage('l');
 applyTheme();
 </script>

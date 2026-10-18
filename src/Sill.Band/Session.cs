@@ -37,6 +37,8 @@ namespace Sill.Band
             try
             {
                 _pipe.Connect(10000);
+                // 연결을 기다리는 동안 닫혔으면(새 터미널 직후 탭 ×, 창 닫기) 여기서 끝낸다. 읽기로 가면 영원히 기다리고 sill-host도 남는다(M10 설계 3.3절).
+                if (_closed) { _pipe.Dispose(); return; }
                 _pipe.ReadMode = PipeTransmissionMode.Message;
                 lock (_pending)
                 {

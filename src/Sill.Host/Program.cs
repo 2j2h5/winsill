@@ -55,7 +55,8 @@ namespace Sill.Host
             var security = new PipeSecurity();
             security.AddAccessRule(new PipeAccessRule(WindowsIdentity.GetCurrent().User, PipeAccessRights.FullControl, AccessControlType.Allow));
             // Asynchronous: 읽기(이 스레드)와 쓰기(출력 스레드)가 같은 핸들에서 서로 막지 않게 한다.
-            using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Message, PipeOptions.Asynchronous, 0, 0, security))
+            // 버퍼가 0이면 이 스레드가 읽지 않는 동안(셸을 띄우는 동안, 최대 약 2 s) band의 쓰기, 곧 탐색기 UI 스레드가 막힌다(M10 설계 3.3절).
+            using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Message, PipeOptions.Asynchronous, 65536, 65536, security))
             {
                 var wait = pipe.BeginWaitForConnection(null, null);
                 if (!wait.AsyncWaitHandle.WaitOne(10000)) { Log("연결 시간 초과"); return; }
@@ -121,6 +122,9 @@ namespace Sill.Host
                         try { pty = Pty.Start(shell.CommandLine, shell.Title, cols, rows, dir); }
                         catch (Win32Exception e) { notice("Cannot start the shell: " + shell.Name + " (" + e.Message + ")"); Flush(pipe); pipe.WaitForPipeDrain(); return; }
                         Log("셸 시작 {0} pid={1} {2}x{3} {4}", shell.Name, pty.Process.Id, cols, rows, dir);
+                        // ConPTY는 셸이 첫 화면을 그릴 때에야 시작 제목을 보낸다(powershell 1.9 s). 그동안 탭이 비지 않게 먼저 보낸다(M10 설계 3.2절).
+                        sync.Title = shell.Title;
+                        Out("\x1b]0;" + shell.Title + "\x07");
                         sync.Started(pty, shell.Cd, KeyFile);
                         var started = pty;
                         new Thread(() => Pump(started, pipe, sync)) { IsBackground = true }.Start();

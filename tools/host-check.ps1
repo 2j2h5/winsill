@@ -5,6 +5,7 @@
 # M4: 위 항목을 셸마다(powershell, pwsh, cmd, gitbash) 돌린다. 사용자의 settings.json은 건드리지 않는다.
 # M8: 출력 묶기, 되울림 지연, 파이프 ACL, PS1을 매번 쓰는 .bashrc, 낡은 되먹임 항목, 끊긴 네트워크 경로 뒤 입력, 끊긴 시작 폴더.
 # M9: 종료 줄 뒤의 종료 코드(e).
+# M10: 시작 제목, 셸을 띄우는 동안 쓰기가 막히지 않음.
 param([ValidateSet('powershell', 'pwsh', 'cmd', 'gitbash')] [string]$Shell = 'powershell')
 $ErrorActionPreference = 'Stop'
 $base = Join-Path $env:TEMP ('sill-check-' + [guid]::NewGuid().ToString('N'))
@@ -59,9 +60,14 @@ function Ready { $i = $script:text.LastIndexOf("$([char]27)]133;A"); $i -ge 0 -a
 # 프롬프트 수는 보내기 전에 세어 둔다. 보낸 뒤에 세면 그사이 온 프롬프트를 놓친다.
 function WaitPrompt([int]$n) { WaitFor { (Prompts) -gt $n -and (Ready) } | Out-Null }
 $results = [ordered]@{}
+$info = [ordered]@{}
 
 Send "c$dirA"      # 셸 시작 전: 시작 폴더가 된다
 Send 'r100,30'
+# M10: 셸이 첫 화면을 그리기 전에 sill-host가 시작 제목(OSC 0)을 보낸다. ConPTY는 첫 화면 때에야 보낸다(powershell 1.9 s).
+$sw0 = [Diagnostics.Stopwatch]::StartNew()
+$results['시작 제목(0.3 s 이하)'] = (WaitFor { $script:text.Contains("$([char]27)]0;") } 2) -and $sw0.Elapsed.TotalSeconds -le 0.3
+$info['시작 제목'] = '{0:F0} ms' -f $sw0.Elapsed.TotalMilliseconds
 $results['시작 폴더'] = WaitFor { (Cwd) -eq $dirA.FullName -and (Prompts) -gt 0 } 30
 Start-Sleep 1      # 프로필이 프롬프트를 두 번 그리는 경우까지 기다린다
 
@@ -75,7 +81,6 @@ $results['같은 크기 r → 화면 다시 옴'] = WaitFor { $script:text.Index
 $results['같은 크기 r → 제목 다시 옴'] = $script:text.IndexOf("$([char]27)]0;", $len) -ge 0
 
 $results['파이프 ACL 현재 사용자만'] = $aclOk
-$info = [ordered]@{}
 
 # M8: 대량 출력은 sill-host가 16 ms에 한 번까지 묶어 보낸다. 입력 에코에는 19999가 없다.
 $len = $script:text.Length; $m0 = $script:omsgs; $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -220,6 +225,10 @@ $pipe.ReadMode = 'Message'
 $script:text = ''; $script:atStart = $true; $script:t = $null
 $sw.Restart()
 Send ('c' + (Get-DeadPath)); Send 'r100,30'
+# M10: sill-host가 셸을 띄우는 동안(시작 폴더 확인 2 s)에도 band의 쓰기는 막히지 않는다. 빈 입력이라 셸에는 아무것도 가지 않는다.
+$sw1 = [Diagnostics.Stopwatch]::StartNew(); Send 'i'
+$info['셸을 띄우는 동안 쓰기'] = '{0:F0} ms' -f $sw1.Elapsed.TotalMilliseconds
+$results['셸을 띄우는 동안 쓰기(10 ms 이하)'] = $sw1.Elapsed.TotalMilliseconds -le 10
 $started = WaitFor { (Prompts) -gt 0 -and (Cwd) } 30
 $info['끊긴 시작 폴더 → 첫 프롬프트'] = '{0:F0} ms' -f $sw.Elapsed.TotalMilliseconds
 $results['끊긴 시작 폴더는 홈에서 곧 시작(5 s 이하)'] = $started -and $sw.Elapsed.TotalSeconds -le 5 -and (Cwd) -eq $env:USERPROFILE

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -47,11 +49,54 @@ namespace Sill.Host
         }
 
         // 오른쪽 클릭 메뉴: 메뉴를 연 탐색기 창이 전경이다. 이미 열려 있으면 닫지 않고 포커스만 준다.
+        // 바탕 화면처럼 탐색기 창 밖이면 그 폴더로 탐색기를 열고 패널을 켠다(Open in Terminal과 같음, M8 설계 3.6절).
         public static int Open(string folder)
         {
             Log("메뉴 {0}", folder);
-            InSta(() => Act(Native.GetForegroundWindow(), Focus));
+            InSta(() =>
+            {
+                IntPtr frame = Native.GetForegroundWindow();
+                if (ClassOf(frame) == "CabinetWClass") Act(frame, Focus);
+                else OpenWindow(folder);
+            });
             return 0;
+        }
+
+        // Windows 11은 설정에 따라 새 창 대신 기존 창의 새 탭으로 연다. 그 폴더를 보는 항목이 늘면 마지막 것을 고르므로 둘 다 맞는다.
+        static void OpenWindow(string folder)
+        {
+            object shell = Activator.CreateInstance(Type.GetTypeFromProgID("Shell.Application"));
+            int before = Showing(shell, folder).Count;
+            Process.Start("explorer.exe", "\"" + folder + "\"").Dispose();
+            for (int i = 0; i < 100; i++)
+            {
+                Thread.Sleep(100);
+                var tabs = Showing(shell, folder);
+                if (tabs.Count <= before) continue;
+                object tab = tabs[tabs.Count - 1];
+                tab.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, tab, new object[] { Clsid, true, null });
+                Log("새 창에 패널 열기 {0}", folder);
+                return;
+            }
+            Log("새 창을 찾지 못함 {0}", folder);
+        }
+
+        static List<object> Showing(object shell, string folder)
+        {
+            var found = new List<object>();
+            object windows = Call(shell, "Windows");
+            int count = (int)Get(windows, "Count");
+            for (int i = 0; i < count; i++)
+            {
+                try
+                {
+                    object w = Call(windows, "Item", i);
+                    string path = (string)Get(Get(Get(Get(w, "Document"), "Folder"), "Self"), "Path");
+                    if (string.Equals(path.TrimEnd('\\'), folder.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) found.Add(w);
+                }
+                catch (Exception) { }   // 아직 문서가 없는 창(여는 중)
+            }
+            return found;
         }
 
         // Shell.Application은 STA 개체이고, 단축키 메시지는 등록한 스레드로 온다.

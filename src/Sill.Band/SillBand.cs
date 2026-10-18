@@ -37,6 +37,7 @@ namespace Sill.Band
         ComTypes.IConnectionPoint _events;
         int _cookie;
         IntPtr _bar;                        // 서브클래싱한 탐색기의 BaseBar 창
+        Label _notice;                      // WebView2를 만들지 못했을 때의 안내
 
         static void Log(string format, params object[] args) { Shared.Log("band.log", format, args); }
 
@@ -117,11 +118,6 @@ namespace Sill.Band
                 web.IsVisible = view.Visible;
                 web.GotFocus += (s, e) => Safe("web.GotFocus", () => NotifyFocus(true));
                 web.LostFocus += (s, e) => Safe("web.LostFocus", () => NotifyFocus(false));
-                web.AcceleratorKeyPressed += (s, e) =>
-                {
-                    if (e.KeyEventKind == CoreWebView2KeyEventKind.KeyDown || e.KeyEventKind == CoreWebView2KeyEventKind.SystemKeyDown)
-                        Log("AcceleratorKeyPressed vk=0x{0:X2} {1}", e.VirtualKey, e.KeyEventKind);
-                };
 
                 var core = web.CoreWebView2;
                 core.Settings.AreBrowserAcceleratorKeysEnabled = false;
@@ -137,7 +133,26 @@ namespace Sill.Band
                 if (view.Focused) web.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
                 Log("WebView2 준비 (스레드 {0})", System.Threading.Thread.CurrentThread.ManagedThreadId);
             }
-            catch (Exception e) { Log("WebView2 예외: {0}", e); }
+            catch (Exception e)
+            {
+                Log("WebView2 예외: {0}", e);
+                // 실패한 환경을 남기면 이 창의 band는 모두 실패한다. 버리고, 안내를 보인 뒤 패널을 다시 열 때(ShowDW) 다시 만든다(M8 설계 3.4절).
+                if (_env != null && _env.IsFaulted) _env = null;
+                if (view == _view && _web == null) ShowNotice(e.Message);
+            }
+        }
+
+        // WebView2 대신 band 창에 보이는 안내 한 줄. 런타임이 없는 Windows 10이 이 경우다. band 창의 제목("Sill")은 상주 프로세스가 찾는 데 쓰므로 그대로 둔다.
+        void ShowNotice(string error)
+        {
+            if (_notice == null)
+            {
+                _notice = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter };
+                _view.Controls.Add(_notice);
+            }
+            _notice.ForeColor = Theme.Light ? Color.FromArgb(0x1A, 0x1A, 0x1A) : Color.FromArgb(0xCC, 0xCC, 0xCC);
+            _notice.Text = "Sill could not start WebView2 (" + error + ").\nInstall the Microsoft Edge WebView2 Runtime, then reopen the panel.";
+            Log("WebView2 안내");
         }
 
         // M6 설계 3.3절: 브라우저나 렌더러 프로세스가 죽으면 컨트롤러를 다시 만든다. sill-host와 셸은 그대로이고,
@@ -179,9 +194,9 @@ namespace Sill.Band
 
         void ToPage(string m)
         {
-            if (m.StartsWith("p")) Safe("셸 폴더", () => Navigate(m.Substring(1)));
+            if (m[0] == 'p') Safe("셸 폴더", () => Navigate(m.Substring(1)));
             // Ctrl+,: sill-host의 자식은 작업 개체와 함께 끝나므로 메모장은 band가 띄운다(M6 설계 3.6절).
-            else if (m.StartsWith("s")) Safe("설정 파일", () => Process.Start("notepad.exe", "\"" + m.Substring(1) + "\""));
+            else if (m[0] == 's') Safe("설정 파일", () => Process.Start("notepad.exe", "\"" + m.Substring(1) + "\""));
             else if (_web != null) _web.CoreWebView2.PostWebMessageAsString(m);
         }
 
@@ -389,6 +404,14 @@ namespace Sill.Band
                 // 탐색기는 패널을 닫았다 열 때마다 사이트 스타일을 되돌리므로 보일 때마다 다시 적용한다. 그 전의 배치에는 띠 머리가 있다.
                 if (_view != null && !fShow) _view.CaptionOff = false;
                 if (_view != null && fShow) Safe("탐색기 모양", Restyle);
+                // WebView2를 만들지 못해 안내를 보이던 패널을 다시 열면 다시 시도한다(M8 설계 3.4절).
+                if (_view != null && fShow && _notice != null)
+                {
+                    _notice.Dispose();
+                    _notice = null;
+                    Log("WebView2 다시 시도");
+                    InitWebView(_view);
+                }
                 if (_view != null) _view.Visible = fShow;
                 if (_web != null) _web.IsVisible = fShow;
                 return Native.S_OK;
@@ -445,14 +468,8 @@ namespace Sill.Band
             return f == _view.Handle || Native.IsChild(_view.Handle, f) ? Native.S_OK : Native.S_FALSE;
         }
 
-        // 키는 WebView2 프로세스의 창이 받으므로 여기로 오지 않을 것으로 본다(M1 설계 3.4절). 오는지 확인하려고 로그만 남긴다.
-        public int TranslateAcceleratorIO(ref MSG pMsg)
-        {
-            const uint WM_KEYDOWN = 0x100, WM_SYSKEYDOWN = 0x104;
-            if (pMsg.message == WM_KEYDOWN || pMsg.message == WM_SYSKEYDOWN)
-                Log("TranslateAcceleratorIO msg=0x{0:X} vk=0x{1:X2}", pMsg.message, pMsg.wParam.ToInt64());
-            return Native.S_FALSE;
-        }
+        // 키는 WebView2 프로세스의 창이 받으므로 여기로 오지 않는다(M1에서 키 24개로 확인). 키 로그는 M8에서 지웠다.
+        public int TranslateAcceleratorIO(ref MSG pMsg) { return Native.S_FALSE; }
 
         void NotifyFocus(bool focused)
         {
@@ -471,6 +488,7 @@ namespace Sill.Band
             if (_view == null) return;
             _view.Dispose();
             _view = null;
+            _notice = null;
         }
     }
 

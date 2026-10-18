@@ -455,6 +455,9 @@ namespace Sill.Band
             return o.GetType().InvokeMember(name, BindingFlags.GetProperty, null, o, null);
         }
 
+        // 얻은 COM 개체를 얻은 만큼만 놓는다. 탐색기의 .NET 셸 확장들은 한 AppDomain에서 같은 RCW를 함께 쓰지만, RCW의 참조 수는
+        // 얻을 때마다 오르므로 얻은 만큼 놓으면 다른 확장의 참조는 남는다. 받은 개체(이벤트 인자 pDisp 등)는 놓지 않는다.
+        // 놓기를 빼면 탐색 500번에 탐색기 메모리가 약 3.4 MB 더 남았다(M11 설계 2.3절).
         static void Release(object o)
         {
             if (o != null && Marshal.IsComObject(o)) Marshal.ReleaseComObject(o);

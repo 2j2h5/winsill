@@ -5,26 +5,29 @@
 <link rel="stylesheet" href="xterm.css">
 <style>
   /* 탐색기와 같은 색(M7 설계 표 4·5). 라이트 값은 band의 Theme과 같다. */
-  :root { --strip: #202020; --bg: #191919; --text: #ffffff; --hover: rgba(255, 255, 255, 0.06); }
+  :root { --strip: #202020; --bg: #191919; --text: #ffffff; --hover: rgba(255, 255, 255, 0.06); --sep: rgba(255, 255, 255, 0.25); }
   @media (prefers-color-scheme: light) {
-    :root { --strip: #e8e8e8; --bg: #ffffff; --text: #1a1a1a; --hover: rgba(0, 0, 0, 0.04); }
+    :root { --strip: #e8e8e8; --bg: #ffffff; --text: #1a1a1a; --hover: rgba(0, 0, 0, 0.04); --sep: rgba(0, 0, 0, 0.2); }
   }
   html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
-  /* 탭 줄: Windows Terminal처럼 터미널마다 탭(M7 설계 3.3절). 높이 28 px, 탭 24 px(M9 설계 표 5). 선택된 탭은 터미널과 같은 바탕이라 터미널로 이어진다. */
-  #strip { position: absolute; inset: 0 0 auto 0; height: 28px; background: var(--strip); display: flex; align-items: flex-end;
+  /* 탭 줄: Windows Terminal처럼 터미널마다 탭(M7 설계 3.3절). 높이 28 px(M9 설계 표 5). 선택된 탭은 터미널과 같은 바탕이라 터미널로 이어진다.
+     탭은 줄 높이를 다 채우고, 제목·탭 ×·+·패널 ×는 모두 줄 가운데에 맞춘다(M9 결과 리뷰). */
+  #strip { position: absolute; inset: 0 0 auto 0; height: 28px; background: var(--strip); display: flex; align-items: center;
            font: 12px "Segoe UI Variable Text", "Segoe UI", sans-serif; color: var(--text); user-select: none; }
-  #tabs { display: flex; gap: 2px; margin-left: 8px; min-width: 0; overflow: hidden; }
-  .tab { width: 240px; flex-shrink: 1; min-width: 72px; height: 24px; box-sizing: border-box; padding: 0 2px 0 12px;
+  #tabs { display: flex; gap: 2px; margin-left: 8px; min-width: 0; height: 100%; overflow: hidden; }
+  .tab { width: 240px; flex-shrink: 1; min-width: 72px; height: 100%; box-sizing: border-box; position: relative; padding: 0 2px 0 12px;
          border-radius: 8px 8px 0 0; display: flex; align-items: center; opacity: 0.75; }
   .tab:hover { background: var(--hover); }
   .tab.active { background: var(--bg); opacity: 1; }
+  /* 선택되지 않은 탭끼리는 글자 높이만 한 세로선으로 나눈다. 선택된 탭 옆에는 두지 않는다. */
+  .tab:not(.active) + .tab:not(.active)::before { content: ''; position: absolute; left: -2px; top: 7px; width: 1px; height: 14px; background: var(--sep); }
   .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   button { border: 0; border-radius: 4px; background: none; color: var(--text); font: 10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; flex: none; }
   button:hover { background: var(--hover); }
   .x { width: 20px; height: 20px; font-size: 8px; visibility: hidden; }
   .tab.active .x, .tab:hover .x { visibility: visible; }
-  #new { width: 40px; height: 24px; margin: 0 0 2px 4px; font-size: 12px; }
-  #close { width: 40px; height: 24px; margin: 0 4px 2px auto; }
+  #new { width: 40px; height: 24px; margin-left: 4px; font-size: 12px; }
+  #close { width: 40px; height: 24px; margin: 0 4px 0 auto; }
   /* 터미널은 모두 같은 자리에 겹친다. display: none과 달리 숨은 터미널도 크기를 잴 수 있어 함께 맞춘다(M9 설계 3.3절). */
   .term { position: absolute; inset: 30px 0 0 6px; visibility: hidden; }
   .term.active { visibility: visible; }

@@ -15,7 +15,7 @@
   #strip { position: absolute; inset: 0 0 auto 0; height: 28px; background: var(--strip); display: flex; align-items: center;
            font: 12px "Segoe UI Variable Text", "Segoe UI", sans-serif; color: var(--text); user-select: none; }
   #tabs { display: flex; gap: 2px; margin-left: 8px; min-width: 0; height: 100%; overflow: hidden; }
-  .tab { width: 240px; flex-shrink: 1; min-width: 72px; height: 100%; box-sizing: border-box; position: relative; padding: 0 2px 0 12px;
+  .tab { width: 200px; flex-shrink: 1; min-width: 72px; height: 100%; box-sizing: border-box; position: relative; padding: 0 2px 0 12px;
          border-radius: 8px 8px 0 0; display: flex; align-items: center; opacity: 0.75; }
   .tab:hover { background: var(--hover); }
   .tab.active { background: var(--bg); opacity: 1; }
@@ -24,10 +24,9 @@
   .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   button { border: 0; border-radius: 4px; background: none; color: var(--text); font: 10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; flex: none; }
   button:hover { background: var(--hover); }
-  .x { width: 20px; height: 20px; font-size: 8px; visibility: hidden; }
-  .tab.active .x, .tab:hover .x { visibility: visible; }
-  #new { width: 40px; height: 24px; margin-left: 4px; font-size: 12px; }
-  #close { width: 40px; height: 24px; margin: 0 4px 0 auto; }
+  .x { width: 20px; height: 20px; font-size: 8px; }
+  #new { width: 32px; height: 24px; margin-left: 2px; font-size: 12px; }
+  #close { width: 32px; height: 24px; margin: 0 4px 0 auto; }
   /* 터미널은 모두 같은 자리에 겹친다. display: none과 달리 숨은 터미널도 크기를 잴 수 있어 함께 맞춘다(M9 설계 3.3절). */
   .term { position: absolute; inset: 30px 0 0 6px; visibility: hidden; }
   .term.active { visibility: visible; }

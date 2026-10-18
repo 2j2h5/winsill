@@ -139,14 +139,22 @@ bind '""\e[24;8~"": ""\e[99~\C-m""'
             catch (ArgumentException) { return first; }
         }
 
+        // 네트워크 폴더(UNC, 연결된 드라이브)는 건너뛴다. 끊겨 있으면 폴더 하나에 20초 넘게 걸리고, 셸 시작 전의 파이프 읽기 스레드를 막는다(M8 후속).
         static string OnPath(string exe)
         {
             foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
             {
-                try { if (dir.Length > 0 && File.Exists(Path.Combine(dir, exe))) return Path.Combine(dir, exe); }
+                try { if (dir.Length > 0 && !OnNetwork(dir) && File.Exists(Path.Combine(dir, exe))) return Path.Combine(dir, exe); }
                 catch (ArgumentException) { }
             }
             return null;
+        }
+
+        static bool OnNetwork(string dir)
+        {
+            if (dir.StartsWith(@"\\")) return true;
+            string root = Path.GetPathRoot(dir);
+            return root.Length > 0 && new DriveInfo(root).DriveType == DriveType.Network;
         }
     }
 }

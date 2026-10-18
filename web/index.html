@@ -10,26 +10,34 @@
     :root { --strip: #e8e8e8; --bg: #ffffff; --text: #1a1a1a; --hover: rgba(0, 0, 0, 0.04); }
   }
   html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
-  /* 탭 줄: 탐색기 위쪽 탭과 같은 치수(WinUI TabView). 선택된 탭은 터미널과 같은 바탕이라 터미널로 이어진다. */
-  #strip { position: absolute; inset: 0 0 auto 0; height: 36px; background: var(--strip); display: flex; align-items: flex-end;
+  /* 탭 줄: Windows Terminal처럼 터미널마다 탭(M7 설계 3.3절). 높이 28 px, 탭 24 px(M9 설계 표 5). 선택된 탭은 터미널과 같은 바탕이라 터미널로 이어진다. */
+  #strip { position: absolute; inset: 0 0 auto 0; height: 28px; background: var(--strip); display: flex; align-items: flex-end;
            font: 12px "Segoe UI Variable Text", "Segoe UI", sans-serif; color: var(--text); user-select: none; }
-  #tab { margin-left: 8px; height: 32px; min-width: 120px; max-width: 240px; box-sizing: border-box; padding: 0 12px;
-         background: var(--bg); border-radius: 8px 8px 0 0; display: flex; align-items: center; }
-  #title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  #close { margin: 0 4px 2px auto; width: 40px; height: 32px; border: 0; border-radius: 4px; background: none; color: var(--text);
-           font: 10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; }
-  #close:hover { background: var(--hover); }
-  #t { position: absolute; inset: 38px 0 0 6px; }
+  #tabs { display: flex; gap: 2px; margin-left: 8px; min-width: 0; overflow: hidden; }
+  .tab { width: 240px; flex-shrink: 1; min-width: 72px; height: 24px; box-sizing: border-box; padding: 0 2px 0 12px;
+         border-radius: 8px 8px 0 0; display: flex; align-items: center; opacity: 0.75; }
+  .tab:hover { background: var(--hover); }
+  .tab.active { background: var(--bg); opacity: 1; }
+  .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  button { border: 0; border-radius: 4px; background: none; color: var(--text); font: 10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; flex: none; }
+  button:hover { background: var(--hover); }
+  .x { width: 20px; height: 20px; font-size: 8px; visibility: hidden; }
+  .tab.active .x, .tab:hover .x { visibility: visible; }
+  #new { width: 40px; height: 24px; margin: 0 0 2px 4px; font-size: 12px; }
+  #close { width: 40px; height: 24px; margin: 0 4px 2px auto; }
+  /* 터미널은 모두 같은 자리에 겹친다. display: none과 달리 숨은 터미널도 크기를 잴 수 있어 함께 맞춘다(M9 설계 3.3절). */
+  .term { position: absolute; inset: 30px 0 0 6px; visibility: hidden; }
+  .term.active { visibility: visible; }
 </style>
 </head>
 <body>
-<div id="strip"><div id="tab"><span id="title"></span></div><button id="close" title="Close (Ctrl+`)">&#xE8BB;</button></div>
-<div id="t"></div>
+<div id="strip"><div id="tabs"></div><button id="new" title="New Terminal (Ctrl+Shift+`)">&#xE710;</button><button id="close" title="Close (Ctrl+`)">&#xE8BB;</button></div>
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
 <script>
 // 화면과 입력만 맡는다. 메시지는 band를 거쳐 sill-host로 간다: r(크기) i(입력) s(설정 파일) / o(출력) x(세션 끝남) n(다시 시작). M1 설계 표 2, M6 설계 표 6.
-// band가 직접 받는 것: h(패널 닫기) t(앱 모드가 바뀜). M7 설계 표 7.
+// 한 터미널의 메시지는 종류 글자 뒤에 band가 붙인 번호와 빈칸이 온다(i2 dir). M9 설계 표 4.
+// band가 직접 받는 것: h(패널 닫기) t(앱 모드가 바뀜) l(페이지가 떴다) +(새 터미널) a(활성 터미널) -(터미널 닫기). M7 설계 표 7, M9 설계 표 4.
 const host = window.chrome.webview;
 
 // 터미널 색표: 바탕은 탐색기의 내용 영역, ANSI 16색은 VS Code의 다크·라이트 기본값(M7 설계 표 8).
@@ -46,123 +54,185 @@ const themes = {
   },
 };
 const lightMode = matchMedia('(prefers-color-scheme: light)');
-const term = new Terminal({
-  fontFamily: '"Cascadia Mono", Consolas, monospace',
-  fontSize: 13,
-  cursorBlink: true,
-  theme: themes[lightMode.matches ? 'light' : 'dark'],
-  minimumContrastRatio: 4.5,    // 흰 바탕의 PSReadLine 노란 명령어 등, 대비가 낮은 글자만 진하게(VS Code 기본값)
-});
-// WebView2는 Windows 앱 모드를 prefers-color-scheme으로 준다. band는 모드 변경을 받지 못하므로 t로 알린다.
-const applyTheme = () => { term.options.theme = themes[lightMode.matches ? 'light' : 'dark']; host.postMessage('t'); };
-lightMode.addEventListener('change', applyTheme);
+const theme = () => themes[lightMode.matches ? 'light' : 'dark'];
 
-// 탭 제목은 Windows Terminal처럼 프로그램이 보낸 제목(OSC 0·2)이다. 첫 제목은 sill-host가 준 셸 이름이고(M7 설계 3.4절),
-// 프로그램이 제목을 지우면 셸 이름으로 돌아간다. cmd는 첫 제목부터 "cmd - prompt …"처럼 실행 중인 명령을 붙이므로 뗀다.
-const titleEl = document.getElementById('title');
-let shellName = '';
-term.onTitleChange(t => {
-  if (!shellName) shellName = t.replace(/ - .*$/, '');
-  titleEl.textContent = titleEl.title = t || shellName;
-});
-document.getElementById('close').onclick = () => host.postMessage('h');
-// 탭 줄을 눌러도 포커스는 터미널에 둔다.
-document.getElementById('strip').addEventListener('mousedown', e => { e.preventDefault(); term.focus(); });
-const fit = new FitAddon.FitAddon();
-term.loadAddon(fit);
-term.open(document.getElementById('t'));
+// 번호 → 터미널. band가 번호 순으로 알려 주므로 Map의 순서가 탭 순서다. active는 보이는 터미널의 번호.
+const terms = new Map();
+let active = 0;
+const tabsEl = document.getElementById('tabs');
 
 // 같은 크기를 두 번 보내지 않는다. sill-host는 같은 크기를 "화면을 다시 그려 달라"(새 페이지)로 읽는다(M6 설계 3.3절).
-let sentSize = '';
-const sendSize = () => {
-  const r = 'r' + term.cols + ',' + term.rows;
-  if (r !== sentSize) host.postMessage(sentSize = r);
+const sendSize = t => {
+  const r = t.term.cols + ',' + t.term.rows;
+  if (r !== t.sentSize) host.postMessage('r' + t.id + ' ' + (t.sentSize = r));
 };
-let ended = false;
 
-term.onData(d => {
-  if (ended) {
-    ended = false;
-    term.reset();
-    shellName = '';
-    host.postMessage('n');
-    newCommand = true;
-    sentSize = '';    // 새 세션은 크기를 받아야 셸을 시작한다
-    sendSize();
-    return;
-  }
-  host.postMessage('i' + d);
-});
-term.onResize(sendSize);
-
-host.addEventListener('message', e => {
-  const m = e.data;
-  if (m[0] === 'o') term.write(m.slice(1));
-  else if (m === 'n') {
-    // band가 새 세션을 시작했다(Ctrl+Shift+`). 새 셸이 크기를 받아야 시작한다.
-    ended = false;
-    term.reset();
-    shellName = '';
-    newCommand = true;
-    sentSize = '';
-    sendSize();
-  }
-  else if (m === 'x' && !ended) {
-    ended = true;
-    // 셸이 끝났으면 sill-host가 종료 줄을 먼저 보냈다(M6 설계 표 8). sill-host가 그냥 끊겼으면 줄 중간일 수 있다.
-    term.write((term.buffer.active.cursorX ? '\r\n' : '') + '\x1b[90mPress any key to restart.\x1b[0m\r\n');
-  }
-});
-
-// 프롬프트마다(OSC 133;A) 표식을 남겨 Ctrl+Up/Down이 이전·다음 명령으로 스크롤하게 한다. 출력은 그대로 xterm.js가 처리한다.
-// 셸은 줄을 다시 그릴 때도 133;A를 낼 수 있으므로(긴 입력이 줄바꿈될 때), Enter나 Ctrl+C 뒤의 첫 133;A에만 표식을 남긴다.
-const prompts = [];
-let newCommand = true;
-term.onData(d => { if (d.includes('\r') || d.includes('\x03')) newCommand = true; });
-term.parser.registerOscHandler(133, data => {
-  if (data[0] === 'A' && newCommand) { prompts.push(term.registerMarker(0)); newCommand = false; }
-  return false;
-});
-const scrollToPrompt = up => {
-  const top = term.buffer.active.viewportY;
-  const lines = prompts.filter(p => !p.isDisposed).map(p => p.line);
-  const line = up ? lines.filter(l => l < top).pop() : lines.find(l => l > top);
-  if (line === undefined) up ? term.scrollToTop() : term.scrollToBottom();
-  else term.scrollToLine(line);
+// 셸이 끝났거나 band가 같은 번호로 새 sill-host를 띄웠다. 새 셸은 크기를 받아야 시작한다.
+const restart = t => {
+  t.ended = false;
+  t.term.reset();
+  t.shellName = '';
+  t.newCommand = true;
+  t.sentSize = '';
+  sendSize(t);
 };
 
 // Windows Terminal과 같게: Ctrl+C는 선택이 있으면 복사, 없으면 ^C. Ctrl+V는 브라우저 붙여넣기(xterm.js가 paste 이벤트를 처리).
-// 그 밖에는 VS Code의 기본 키(M6 설계 표 2). Ctrl+`, Ctrl+Shift+`는 상주 프로세스가 먼저 받는다. Shift+PageUp/PageDown은 xterm.js가 스크롤한다.
+// 그 밖에는 VS Code의 기본 키(M6 설계 표 2, M9 설계 표 6). Ctrl+`, Ctrl+Shift+`는 상주 프로세스가 먼저 받는다. Shift+PageUp/PageDown은 xterm.js가 스크롤한다.
 const keys = {
   'Comma': () => host.postMessage('s'),
-  'Home': () => term.scrollToTop(),
-  'End': () => term.scrollToBottom(),
-  'ArrowUp': () => scrollToPrompt(true),
-  'ArrowDown': () => scrollToPrompt(false),
-  'Alt+PageUp': () => term.scrollLines(-1),
-  'Alt+PageDown': () => term.scrollLines(1),
+  'Home': t => t.term.scrollToTop(),
+  'End': t => t.term.scrollToBottom(),
+  'ArrowUp': t => scrollToPrompt(t, true),
+  'ArrowDown': t => scrollToPrompt(t, false),
+  'PageUp': () => cycle(-1),
+  'PageDown': () => cycle(1),
+  'Alt+PageUp': t => t.term.scrollLines(-1),
+  'Alt+PageDown': t => t.term.scrollLines(1),
 };
-term.attachCustomKeyEventHandler(e => {
-  if (!e.ctrlKey || e.shiftKey) return true;
-  const action = keys[(e.altKey ? 'Alt+' : '') + e.code.replace(/^Key/, '')];
-  if (action) {
-    if (e.type === 'keydown') action();
+
+function create(id) {
+  const el = document.createElement('div');
+  el.className = 'term';
+  document.body.appendChild(el);
+  const term = new Terminal({
+    fontFamily: '"Cascadia Mono", Consolas, monospace',
+    fontSize: 13,
+    cursorBlink: true,
+    theme: theme(),
+    minimumContrastRatio: 4.5,    // 흰 바탕의 PSReadLine 노란 명령어 등, 대비가 낮은 글자만 진하게(VS Code 기본값)
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(el);
+  const tab = document.createElement('div');
+  tab.className = 'tab';
+  tab.innerHTML = '<span class="title"></span><button class="x" title="Close Terminal">&#xE8BB;</button>';
+  tabsEl.appendChild(tab);
+  const t = { id, term, fit, el, tab, title: tab.firstChild, shellName: '', ended: false, newCommand: true, prompts: [], sentSize: '' };
+  terms.set(id, t);
+
+  // 탭 제목은 Windows Terminal처럼 프로그램이 보낸 제목(OSC 0·2)이다. 첫 제목은 sill-host가 준 셸 이름이고(M7 설계 3.4절),
+  // 프로그램이 제목을 지우면 셸 이름으로 돌아간다. cmd는 첫 제목부터 "cmd - prompt …"처럼 실행 중인 명령을 붙이므로 뗀다.
+  term.onTitleChange(s => {
+    if (!t.shellName) t.shellName = s.replace(/ - .*$/, '');
+    t.title.textContent = t.title.title = s || t.shellName;
+  });
+  // 탭을 누르면 바꾸고, ×나 가운데 클릭이면 닫는다(Windows Terminal과 같음). 포커스는 터미널에 둔다.
+  tab.addEventListener('mousedown', e => {
+    e.preventDefault();
+    if (e.button === 1 || e.target.className === 'x') close(id);
+    else if (e.button === 0) activate(id, true);
+  });
+  term.onData(d => {
+    if (t.ended) {
+      host.postMessage('n' + id);
+      restart(t);
+      return;
+    }
+    host.postMessage('i' + id + ' ' + d);
+  });
+  term.onResize(() => sendSize(t));
+
+  // 프롬프트마다(OSC 133;A) 표식을 남겨 Ctrl+Up/Down이 이전·다음 명령으로 스크롤하게 한다. 출력은 그대로 xterm.js가 처리한다.
+  // 셸은 줄을 다시 그릴 때도 133;A를 낼 수 있으므로(긴 입력이 줄바꿈될 때), Enter나 Ctrl+C 뒤의 첫 133;A에만 표식을 남긴다.
+  term.onData(d => { if (d.includes('\r') || d.includes('\x03')) t.newCommand = true; });
+  term.parser.registerOscHandler(133, data => {
+    if (data[0] === 'A' && t.newCommand) { t.prompts.push(term.registerMarker(0)); t.newCommand = false; }
     return false;
+  });
+
+  term.attachCustomKeyEventHandler(e => {
+    if (!e.ctrlKey || e.shiftKey) return true;
+    const action = keys[(e.altKey ? 'Alt+' : '') + e.code.replace(/^Key/, '')];
+    if (action) {
+      if (e.type === 'keydown') action(t);
+      return false;
+    }
+    if (e.type !== 'keydown' || e.altKey) return true;
+    if (e.code === 'KeyC' && term.hasSelection()) {
+      navigator.clipboard.writeText(term.getSelection());
+      term.clearSelection();
+      return false;
+    }
+    return e.code !== 'KeyV';
+  });
+
+  fit.fit();
+  sendSize(t);
+}
+
+function activate(id, tell) {
+  const t = terms.get(id);
+  if (!t) return;
+  active = id;
+  for (const u of terms.values()) {
+    u.el.classList.toggle('active', u === t);
+    u.tab.classList.toggle('active', u === t);
   }
-  if (e.type !== 'keydown' || e.altKey) return true;
-  if (e.code === 'KeyC' && term.hasSelection()) {
-    navigator.clipboard.writeText(term.getSelection());
-    term.clearSelection();
-    return false;
+  t.term.focus();
+  if (tell) host.postMessage('a' + id);
+}
+
+// Ctrl+PageDown/PageUp: 다음·이전 터미널, 끝에서 처음으로(VS Code 기본 키).
+function cycle(step) {
+  const ids = [...terms.keys()];
+  activate(ids[(ids.indexOf(active) + step + ids.length) % ids.length], true);
+}
+
+// 탭 ×. band가 그 세션을 끝내고, 마지막이면 패널을 닫는다.
+function close(id) {
+  host.postMessage('-' + id);
+  remove(id);
+}
+
+// 활성 탭이 없어지면 오른쪽(없으면 왼쪽) 탭으로 간다(M9 설계 3.6절).
+function remove(id) {
+  const t = terms.get(id);
+  if (!t) return;
+  const ids = [...terms.keys()], i = ids.indexOf(id);
+  t.term.dispose();
+  t.el.remove();
+  t.tab.remove();
+  terms.delete(id);
+  if (id === active && terms.size) activate(ids[i + 1] ?? ids[i - 1], true);
+}
+
+const scrollToPrompt = (t, up) => {
+  const top = t.term.buffer.active.viewportY;
+  const lines = t.prompts.filter(p => !p.isDisposed).map(p => p.line);
+  const line = up ? lines.filter(l => l < top).pop() : lines.find(l => l > top);
+  if (line === undefined) up ? t.term.scrollToTop() : t.term.scrollToBottom();
+  else t.term.scrollToLine(line);
+};
+
+host.addEventListener('message', e => {
+  const m = e.data, space = m.indexOf(' ');
+  const id = +m.slice(1, space < 0 ? undefined : space), t = terms.get(id);
+  if (m[0] === '+') create(id);
+  else if (m[0] === 'a') activate(id, false);
+  else if (m[0] === '-') remove(id);    // 셸이 코드 0으로 끝나 band가 닫았다
+  else if (!t) return;
+  else if (m[0] === 'o') t.term.write(m.slice(space + 1));
+  else if (m[0] === 'x' && !t.ended) {
+    t.ended = true;
+    // 셸이 끝났으면 sill-host가 종료 줄을 먼저 보냈다(M6 설계 표 8). sill-host가 그냥 끊겼으면 줄 중간일 수 있다.
+    t.term.write((t.term.buffer.active.cursorX ? '\r\n' : '') + '\x1b[90mPress any key to restart.\x1b[0m\r\n');
   }
-  return e.code !== 'KeyV';
 });
 
-new ResizeObserver(() => fit.fit()).observe(document.body);
-fit.fit();
-sendSize();
+document.getElementById('new').onclick = () => host.postMessage('+');
+document.getElementById('close').onclick = () => host.postMessage('h');
+// 탭 줄을 눌러도 포커스는 터미널에 둔다.
+document.getElementById('strip').addEventListener('mousedown', e => { e.preventDefault(); const t = terms.get(active); if (t) t.term.focus(); });
+window.addEventListener('focus', () => { const t = terms.get(active); if (t) t.term.focus(); });
+
+// WebView2는 Windows 앱 모드를 prefers-color-scheme으로 준다. band는 모드 변경을 받지 못하므로 t로 알린다.
+const applyTheme = () => { for (const t of terms.values()) t.term.options.theme = theme(); host.postMessage('t'); };
+lightMode.addEventListener('change', applyTheme);
+new ResizeObserver(() => { for (const t of terms.values()) t.fit.fit(); }).observe(document.body);
+host.postMessage('l');
 applyTheme();
-term.focus();
 </script>
 </body>
 </html>

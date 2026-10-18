@@ -4,6 +4,7 @@
 # M3: 셸의 cd를 p(셸 폴더)로 알리고, 탐색기가 따라온 뒤 돌려주는 c에는 cd를 넣지 않는가.
 # M4: 위 항목을 셸마다(powershell, pwsh, cmd, gitbash) 돌린다. 사용자의 settings.json은 건드리지 않는다.
 # M8: 출력 묶기, 되울림 지연, 파이프 ACL, PS1을 매번 쓰는 .bashrc, 낡은 되먹임 항목, 끊긴 네트워크 경로 뒤 입력, 끊긴 시작 폴더.
+# M9: 종료 줄 뒤의 종료 코드(e).
 param([ValidateSet('powershell', 'pwsh', 'cmd', 'gitbash')] [string]$Shell = 'powershell')
 $ErrorActionPreference = 'Stop'
 $base = Join-Path $env:TEMP ('sill-check-' + [guid]::NewGuid().ToString('N'))
@@ -46,7 +47,7 @@ function WaitFor([scriptblock]$cond, [double]$sec = 20) {
         $chunk = [Text.Encoding]::UTF8.GetString($buf, 0, $script:t.Result)
         if ($script:atStart -and $chunk.Length) { $script:kind = $chunk[0]; $chunk = $chunk.Substring(1); if ($script:kind -eq 'o') { $script:omsgs++ } }
         $script:atStart = $pipe.IsMessageComplete
-        if ($script:kind -eq 'p') { $script:moves += $chunk } else { $script:text += $chunk }
+        if ($script:kind -eq 'p') { $script:moves += $chunk } elseif ($script:kind -eq 'e') { $script:exitCode = $chunk } else { $script:text += $chunk }
         $script:t = $null
     }
     [bool](& $cond)
@@ -202,6 +203,8 @@ $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($hostProc
 # M6: 셸이 끝나면 Windows Terminal 모양의 종료 줄이 오고 sill-host도 끝난다.
 $len = $script:text.Length; Send "iexit`r"
 $results['종료 줄'] = WaitFor { $script:text.IndexOf('[process exited with code 0 (0x00000000)]', $len) -ge 0 } 10
+# M9: 종료 줄 뒤에 종료 코드(e)가 온다. band는 0이면 탭을 닫는다.
+$results['종료 코드 e0'] = WaitFor { $script:exitCode -eq '0' } 5
 $pipe.Dispose()
 $exited = $hostProc.WaitForExit(5000)
 Start-Sleep -Milliseconds 500

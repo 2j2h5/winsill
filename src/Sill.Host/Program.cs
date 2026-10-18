@@ -135,6 +135,8 @@ namespace Sill.Host
                             {
                                 Out(string.Format("\r\n\x1b[90m[process exited with code {0} (0x{0:X8})]\x1b[0m\r\n", code));
                                 Flush(pipe);
+                                // band는 코드가 0이면 그 탭을 닫는다(VS Code와 같음, M9 설계 3.6절).
+                                Shared.Write(pipe, "e" + code);
                                 pipe.WaitForPipeDrain();
                             }
                             catch (Exception e) { Log("종료 줄 실패: {0}", e.Message); }

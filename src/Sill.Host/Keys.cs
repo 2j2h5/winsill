@@ -10,10 +10,11 @@ namespace Sill.Host
 {
     // 단축키 상주 프로세스(sill-host.exe keys)와 오른쪽 클릭 메뉴(sill-host.exe open). M6 설계 3.1·3.7절.
     // 탐색기 창이 전경일 때만 Ctrl+`, Ctrl+Shift+`를 등록하므로 다른 앱의 같은 키는 막지 않는다.
-    // 활성 탭에 패널이 보이면 band 창에 Sill.Key 메시지를 보내고(포커스는 band가 안다), 안 보이면 COM으로 연다.
+    // 활성 탭에 band 창이 있으면(패널이 닫혀 숨어 있어도) Sill.Key 메시지를 보내고, band가 포커스·열기·새 터미널을 정한다(M9 설계 3.4절).
+    // band 창이 없으면(이 탭에서 처음 여는 패널) COM으로 열기만 한다. 그러면 band가 첫 터미널을 만든다.
     static class Keys
     {
-        const int Toggle = 0, Restart = 1, Focus = 2;      // Sill.Key의 wParam
+        const int Toggle = 0, New = 1, Focus = 2;          // Sill.Key의 wParam
         const string Clsid = "{AE2C3550-FB10-4D93-B6E1-4FBED3C0AD90}";
         static readonly uint KeyMessage = Native.RegisterWindowMessage("Sill.Key");
         static Native.WinEventProc _hook;                   // GC가 거두지 않게 붙잡아 둔다
@@ -40,7 +41,7 @@ namespace Sill.Host
                     Native.MSG msg;
                     while (Native.GetMessage(out msg, IntPtr.Zero, 0, 0) > 0)
                     {
-                        if (msg.message == WM_HOTKEY) Act(Native.GetForegroundWindow(), msg.wParam.ToInt32() == 1 ? Restart : Toggle);
+                        if (msg.message == WM_HOTKEY) Act(Native.GetForegroundWindow(), msg.wParam.ToInt32() == 1 ? New : Toggle);
                         else if (msg.message == WM_TIMER) Watch(Native.GetForegroundWindow());
                     }
                 });
@@ -135,12 +136,10 @@ namespace Sill.Host
                 {
                     object tab = ActiveTab(frame);
                     if (tab == null) { Log("활성 탭 없음"); return; }
-                    // 열면 band의 UIActivateIO가 패널에 포커스를 준다(M0·M1). 다시 시작이면 연 패널에 이어서 알린다.
+                    // 열면 band의 UIActivateIO가 패널에 포커스를 준다(M0·M1). 새 band는 터미널 하나로 시작하므로 새 터미널 키도 여기서 끝난다.
                     tab.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, tab, new object[] { Clsid, true, null });
                     Log("패널 열기 action={0}", action);
-                    if (action != Restart) return;
-                    band = FindBand(frame);
-                    if (band == IntPtr.Zero) { Log("연 패널을 찾지 못함"); return; }
+                    return;
                 }
                 Native.PostMessage(band, KeyMessage, (IntPtr)action, IntPtr.Zero);
                 Log("Sill.Key {0} → 0x{1:X}", action, band.ToInt64());
@@ -151,7 +150,7 @@ namespace Sill.Host
         // 활성 탭은 z-순서에서 가장 위의 탭 창이다. Windows 11은 비활성 탭 창도 숨기지 않아 IsWindowVisible로는 가릴 수 없다(M6 시험).
         static IntPtr ActiveTabWindow(IntPtr frame) { return Native.FindWindowEx(frame, IntPtr.Zero, "ShellTabWindowClass", null); }
 
-        // band 창은 활성 탭 창 안의, 제목이 "Sill"인 WinForms 창이다. 패널이 닫혀 있으면 숨겨져 있다.
+        // band 창은 활성 탭 창 안의, 제목이 "Sill"인 WinForms 창이다. 패널이 닫혀 있으면 숨은 채 남는다(M9 설계 표 2).
         static IntPtr FindBand(IntPtr frame)
         {
             IntPtr found = IntPtr.Zero;
@@ -159,7 +158,7 @@ namespace Sill.Host
             {
                 var text = new StringBuilder(8);
                 Native.GetWindowText(h, text, text.Capacity);
-                if (text.ToString() == "Sill" && ClassOf(h).StartsWith("WindowsForms10.") && Native.IsWindowVisible(h)) { found = h; return false; }
+                if (text.ToString() == "Sill" && ClassOf(h).StartsWith("WindowsForms10.")) { found = h; return false; }
                 return true;
             }, IntPtr.Zero);
             return found;
@@ -233,7 +232,6 @@ namespace Sill.Host
             [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc proc, IntPtr lParam);
             [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, StringBuilder s, int n);
             [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hwnd, StringBuilder s, int n);
-            [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
             [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
         }
     }

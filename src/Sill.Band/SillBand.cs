@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -32,7 +33,9 @@ namespace Sill.Band
         CoreWebView2Controller _web;
         Task<CoreWebView2Environment> _envUsed;    // _web을 만든 환경. 브라우저 프로세스가 죽으면 이 환경을 버린다
         DateTime _recovered;                        // 마지막으로 WebView2를 다시 만든 시각
-        Session _session;
+        // 터미널 번호 → 세션(M9 설계 3.1절). 번호는 1부터 붙이고 다시 쓰지 않으므로 번호 순서가 탭 순서다.
+        readonly SortedDictionary<int, Session> _terms = new SortedDictionary<int, Session>();
+        int _active, _lastId;               // 활성 터미널(폴더 동기화 상대), 마지막으로 붙인 번호
         object _browser;                    // 이 탭의 IWebBrowser2
         ComTypes.IConnectionPoint _events;
         int _cookie;
@@ -85,10 +88,9 @@ namespace Sill.Band
                 Log("SetParent 결과 old=0x{0:X} err={1}", old.ToInt64(), Marshal.GetLastWin32Error());
                 _view = view;
 
-                // 세션은 패널 여닫기가 아니라 band 수명(SetSite → CloseDW)에 묶는다(M0 결과 표 2).
-                _session = new Session(view, ToPage, Path.Combine(Dir, "sill-host.exe"));
+                // 세션은 패널 여닫기가 아니라 band 수명(SetSite → CloseDW)에 묶는다(M0 결과 표 2). 첫 터미널은 페이지가 뜨는 동안 준비한다.
                 Safe("탐색기 이벤트 연결", () => WatchBrowser(pUnkSite));
-                Safe("시작 폴더", () => SendFolder("시작"));
+                NewTerminal("시작");
                 InitWebView(view);
                 return Native.S_OK;
             });
@@ -172,61 +174,127 @@ namespace Sill.Band
             InitWebView(_view);
         }
 
+        // 페이지의 메시지(M9 설계 표 4). 한 터미널의 것은 종류 글자 뒤에 번호와 빈칸이 붙는다(i2 dir). 번호를 떼어 그 세션에 넘긴다.
         void OnWebMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             Safe("OnWebMessage", () =>
             {
                 string m = e.TryGetWebMessageAsString();
-                // 세션이 끝난 뒤 페이지에서 키를 누르면 새 sill-host로 다시 시작한다.
-                if (m == "n") Restart("다시 시작");
-                else if (m == "h") { Log("닫기 버튼"); ClosePanel(); }
+                if (m == "h") { Log("닫기 버튼"); ShowPanel(false); }
                 else if (m == "t") ApplyTheme();
-                else _session.Send(m);
+                else if (m == "l") ListTerminals();
+                else if (m == "+") NewTerminal("새 터미널");
+                else if (m == "s") { if (_terms.ContainsKey(_active)) _terms[_active].Send(m); }
+                else
+                {
+                    int space = m.IndexOf(' ');
+                    int id = int.Parse(space < 0 ? m.Substring(1) : m.Substring(1, space - 1));
+                    string rest = space < 0 ? "" : m.Substring(space + 1);
+                    Session s;
+                    if (m[0] == 'a') _active = id;
+                    else if (m[0] == '-') CloseTerminal(id, "탭 ×");
+                    // 셸이 끝난 터미널에서 키를 누르면 같은 번호로 새 sill-host를 띄운다.
+                    else if (m[0] == 'n') Restart(id);
+                    else if (_terms.TryGetValue(id, out s)) s.Send(m[0] + rest);
+                }
             });
         }
 
-        void Restart(string why)
+        void Post(string m)
         {
-            _session.Dispose();
-            _session = new Session(_view, ToPage, Path.Combine(Dir, "sill-host.exe"));
-            SendFolder(why);
+            if (_web != null) _web.CoreWebView2.PostWebMessageAsString(m);
         }
 
-        void ToPage(string m)
+        Session StartSession(int id)
         {
-            if (m[0] == 'p') Safe("셸 폴더", () => Navigate(m.Substring(1)));
+            return new Session(_view, m => ToPage(id, m), Path.Combine(Dir, "sill-host.exe"));
+        }
+
+        // 새 터미널은 탐색기의 지금 폴더에서 시작하고 활성이 된다. 페이지가 아직 없으면 뜬 뒤 l로 받는다.
+        void NewTerminal(string why)
+        {
+            int id = ++_lastId;
+            _terms[id] = StartSession(id);
+            _active = id;
+            Log("터미널 {0} 만듦({1}), {2}개", id, why, _terms.Count);
+            SendFolder(id, why);
+            Post("+" + id);
+            Post("a" + id);
+        }
+
+        void Restart(int id)
+        {
+            Session s;
+            if (!_terms.TryGetValue(id, out s)) return;
+            s.Dispose();
+            _terms[id] = StartSession(id);
+            Log("터미널 {0} 다시 시작", id);
+            SendFolder(id, "다시 시작");
+        }
+
+        // 탭 ×, 또는 셸이 코드 0으로 끝남(M9 설계 3.6절). 파이프를 닫으면 sill-host가 끝나고 작업 개체가 셸을 끝낸다.
+        // 마지막 터미널이면 패널을 닫는다. 다시 열면(ShowDW) 새 터미널을 만든다.
+        void CloseTerminal(int id, string why)
+        {
+            Session s;
+            if (!_terms.TryGetValue(id, out s)) return;
+            s.Dispose();
+            _terms.Remove(id);
+            Log("터미널 {0} 닫음({1}), {2}개", id, why, _terms.Count);
+            if (_terms.Count == 0) ShowPanel(false);
+        }
+
+        // 새 페이지(처음, WebView2 복구 뒤)에 터미널 목록을 준다. 페이지는 탭마다 크기를 보내고, 같은 크기면 sill-host가 화면을 다시 보낸다.
+        void ListTerminals()
+        {
+            foreach (int id in _terms.Keys) Post("+" + id);
+            Post("a" + _active);
+        }
+
+        void ToPage(int id, string m)
+        {
+            // 터미널 → 탐색기는 활성 터미널만(M9 설계 3.5절). 버린 p의 되먹임 항목은 sill-host에서 2초 뒤 낡는다.
+            if (m[0] == 'p')
+            {
+                if (id == _active) Safe("셸 폴더", () => Navigate(m.Substring(1)));
+                else Log("p 건너뜀(뒤 터미널 {0}) {1}", id, m.Substring(1));
+            }
             // Ctrl+,: sill-host의 자식은 작업 개체와 함께 끝나므로 메모장은 band가 띄운다(M6 설계 3.6절).
             else if (m[0] == 's') Safe("설정 파일", () => Process.Start("notepad.exe", "\"" + m.Substring(1) + "\""));
-            else if (_web != null) _web.CoreWebView2.PostWebMessageAsString(m);
+            else if (m[0] == 'e')
+            {
+                Log("터미널 {0} 셸 끝남 code={1}", id, m.Substring(1));
+                if (m == "e0") { CloseTerminal(id, "exit"); Post("-" + id); }
+            }
+            else Post(m[0] + id.ToString() + " " + m.Substring(1));
         }
 
         // --- 단축키와 오른쪽 클릭 메뉴(M6 설계 표 4): 상주 프로세스가 활성 탭의 band 창에 보낸다 ---
 
+        // 상주 프로세스는 패널이 닫혀 있어도 이 탭의 band 창이 있으면 키를 보낸다. 패널은 band가 연다(M9 설계 3.4절).
+        // 새 터미널을 먼저 만들고 열므로, 터미널이 없던 패널도 하나만 생긴다(ShowDW는 터미널이 있으면 만들지 않음).
         void OnKey(int action)
         {
-            const int KeyToggle = 0, KeyRestart = 1;
-            bool focused = PanelFocused();
-            Log("Sill.Key {0} 포커스={1}", action, focused);
-            if (action == KeyRestart)
-            {
-                Restart("다시 시작 키");
-                if (_web != null) _web.CoreWebView2.PostWebMessageAsString("n");   // 페이지가 화면을 지우고 크기를 보낸다
-            }
+            const int KeyToggle = 0, KeyNew = 1;
+            bool shown = _view.Visible, focused = shown && PanelFocused();
+            Log("Sill.Key {0} 보임={1} 포커스={2}", action, shown, focused);
+            if (action == KeyNew) NewTerminal("새 터미널 키");
             else if (action == KeyToggle && focused)
             {
-                ClosePanel();
+                ShowPanel(false);
                 return;
             }
-            _view.Focus();
+            if (shown) _view.Focus();
+            else ShowPanel(true);   // 열면 탐색기의 UIActivateIO가 패널에 포커스를 준다
         }
 
-        // Ctrl+`와 탭 줄의 ×(M7 설계 3.3절). 포커스를 파일 목록에 두고 닫는다. 세션은 band 수명이라 그대로다.
-        void ClosePanel()
+        // Ctrl+`와 탭 줄의 ×(M7 설계 3.3절)는 포커스를 파일 목록에 두고 닫는다. 세션은 band 수명이라 그대로다.
+        void ShowPanel(bool show)
         {
-            FocusFileList();
-            // 창 메시지 처리 중에 바를 닫지 않고 메시지 루프로 미룬다.
-            _view.BeginInvoke(new Action(() => Safe("패널 닫기", () =>
-                _browser.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, _browser, new object[] { "{" + Clsid + "}", false, null }))));
+            if (!show) FocusFileList();
+            // 창 메시지 처리 중에 바를 여닫지 않고 메시지 루프로 미룬다.
+            _view.BeginInvoke(new Action(() => Safe(show ? "패널 열기" : "패널 닫기", () =>
+                _browser.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, _browser, new object[] { "{" + Clsid + "}", show, null }))));
         }
 
         // --- 탐색기가 그리는 모양(M7 설계 3.1·3.2·3.5절) ---
@@ -357,18 +425,20 @@ namespace Sill.Band
             if (hr != Native.S_OK) { Log("IWebBrowser2 없음 hr=0x{0:X8}", hr); return; }
             var iid = typeof(DWebBrowserEvents2).GUID;
             ((ComTypes.IConnectionPointContainer)_browser).FindConnectionPoint(ref iid, out _events);
-            _events.Advise(new BrowserEvents(() => Safe("NavigateComplete2", () => SendFolder("이동"))), out _cookie);
+            _events.Advise(new BrowserEvents(() => Safe("NavigateComplete2", () => SendFolder(_active, "이동"))), out _cookie);
         }
 
-        void SendFolder(string why)
+        // 탐색기 → 터미널은 활성 터미널(또는 새로 시작하는 터미널)에만(M9 설계 3.5절).
+        void SendFolder(int id, string why)
         {
-            if (_browser == null || _session == null) return;
+            Session session;
+            if (_browser == null || !_terms.TryGetValue(id, out session)) return;
             // 표 1: Document.Folder.Self.Path는 파일 시스템 경로를 그대로, 가상 폴더는 ::{GUID}로 준다.
             object self = Get(Get(Get(_browser, "Document"), "Folder"), "Self");
             string path = Get(self, "Path") as string;
             Log("{0} 폴더 {1}", why, path);
             if (string.IsNullOrEmpty(path) || path.StartsWith("::")) return;
-            _session.Send("c" + path);
+            session.Send("c" + path);
         }
 
         static object Get(object o, string name)
@@ -404,6 +474,8 @@ namespace Sill.Band
                 // 탐색기는 패널을 닫았다 열 때마다 사이트 스타일을 되돌리므로 보일 때마다 다시 적용한다. 그 전의 배치에는 띠 머리가 있다.
                 if (_view != null && !fShow) _view.CaptionOff = false;
                 if (_view != null && fShow) Safe("탐색기 모양", Restyle);
+                // 마지막 탭을 닫아 터미널이 없는 패널을 다시 열면 새 터미널로 시작한다(M9 설계 3.6절).
+                if (_view != null && fShow && _terms.Count == 0) NewTerminal("다시 열기");
                 // WebView2를 만들지 못해 안내를 보이던 패널을 다시 열면 다시 시도한다(M8 설계 3.4절).
                 if (_view != null && fShow && _notice != null)
                 {
@@ -481,7 +553,8 @@ namespace Sill.Band
         {
             if (_events != null) { Safe("Unadvise", () => _events.Unadvise(_cookie)); _events = null; }
             _browser = null;
-            if (_session != null) { _session.Dispose(); _session = null; }
+            foreach (var s in _terms.Values) s.Dispose();
+            _terms.Clear();
             // 닫는 동안 band 창이 포커스를 받으면(GotFocus) 닫힌 컨트롤러를 부르지 않도록 먼저 비운다.
             if (_web != null) { var web = _web; _web = null; web.Close(); }
             if (_bar != IntPtr.Zero) { Native.RemoveWindowSubclass(_bar, BarProc, UIntPtr.Zero); _bar = IntPtr.Zero; }

@@ -131,7 +131,7 @@ namespace Sill.Host
                         new Thread(() =>
                         {
                             started.Process.WaitForExit();
-                            int code = started.ExitCode;
+                            int code = started.TakeExitCode();
                             Log("셸 끝남 code={0}", code);
                             // Windows Terminal의 종료 줄 모양(M6 설계 표 8). 셸의 마지막 출력이 먼저 가도록 잠깐 기다린다.
                             Thread.Sleep(100);
@@ -246,7 +246,15 @@ namespace Sill.Host
         IntPtr _hpc;
         IntPtr _process;
 
-        public int ExitCode { get { uint code; Native.GetExitCodeProcess(_process, out code); return (int)code; } }
+        // 셸이 끝난 뒤 한 번 부른다. 종료 코드를 읽고 프로세스 핸들을 닫는다(4차 리뷰 B6, M11).
+        public int TakeExitCode()
+        {
+            uint code;
+            Native.GetExitCodeProcess(_process, out code);
+            Native.CloseHandle(_process);
+            _process = IntPtr.Zero;
+            return (int)code;
+        }
 
         public static Pty Start(string commandLine, string title, short cols, short rows, string dir)
         {

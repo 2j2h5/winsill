@@ -51,6 +51,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
   - 시험 스크립트가 연 새 탐색기 창은 대개 바로 전경이고 패널에 포커스가 있다. 그래도 키마다 포커스 확인은 한다.
   - `IWebBrowser2.Width`로 창 폭을 바꾸면 탐색기가 패널을 닫는다(`ShowDW(False)`). 창 크기는 `SetWindowPos`로 바꾼다.
   - Segoe Fluent Icons의 +(E710)는 10 px에서 ClearType 색 번짐이 캡처에 분홍으로 보였다. 12 px로 그린다.
+- band는 탐색 때 얻은 COM 개체(Document·Folder·Self)와 닫을 때 자기가 얻은 브라우저·연결점을 `Marshal.ReleaseComObject`로 놓는다. 다른 .NET 셸 확장과 RCW를 함께 쓰므로 **얻은 만큼만** 놓고, 받은 개체(이벤트 인자)는 놓지 않는다. 더 놓으면 다른 쪽에 `InvalidComObjectException`이 난다(M11 사전 확인).
 - M10 시험에서 배운 것:
   - 새 터미널의 시간은 대부분 셸 자신이다(개발자 PC의 powershell 첫 프롬프트 1.8 s 중 약 1.45 s가 프로필의 conda 초기화). Sill의 몫은 셸 실행까지 약 0.1 s다. 셸을 미리 띄워 두는 예비 터미널은 개발자가 하지 않기로 했다.
   - WebView2 브라우저 프로세스는 같은 데이터 폴더를 쓰는 모든 탐색기 프로세스가 함께 쓴다(부모는 처음 만든 탐색기 프로세스). 복구 시험은 데이터 폴더로 브라우저를 찾고, 렌더러는 시험 창을 연 뒤 새로 생긴 것만 끈다. 다른 band의 렌더러를 끈 적이 있다.

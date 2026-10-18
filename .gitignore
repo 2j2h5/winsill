@@ -5,3 +5,5 @@ milepost/
 # 탐색기가 폴더에 만드는 파일
 Thumbs.db
 desktop.ini
+dist/
+CLAUDE.local.md

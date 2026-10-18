@@ -14,18 +14,20 @@
      탭은 줄 높이를 다 채우고, 제목·탭 ×·+·패널 ×는 모두 줄 가운데에 맞춘다(M9 결과 리뷰). */
   #strip { position: absolute; inset: 0 0 auto 0; height: 28px; background: var(--strip); display: flex; align-items: center;
            font: 12px "Segoe UI Variable Text", "Segoe UI", sans-serif; color: var(--text); user-select: none; }
-  #tabs { display: flex; gap: 2px; margin-left: 8px; min-width: 0; height: 100%; overflow: hidden; }
-  .tab { width: 200px; flex-shrink: 1; min-width: 72px; height: 100%; box-sizing: border-box; position: relative; padding: 0 2px 0 12px;
+  #tabs { display: flex; gap: 2px; margin-left: 8px; padding-right: 2px; min-width: 0; height: 100%; overflow: hidden; }
+  .tab { width: 200px; flex-shrink: 1; min-width: 72px; height: 100%; box-sizing: border-box; position: relative; padding: 0 6px 0 12px;
          border-radius: 8px 8px 0 0; display: flex; align-items: center; opacity: 0.75; }
   .tab:hover { background: var(--hover); }
   .tab.active { background: var(--bg); opacity: 1; }
-  /* 선택되지 않은 탭끼리는 글자 높이만 한 세로선으로 나눈다. 선택된 탭 옆에는 두지 않는다. */
-  .tab:not(.active) + .tab:not(.active)::before { content: ''; position: absolute; left: -2px; top: 7px; width: 1px; height: 14px; background: var(--sep); }
+  /* 선택되지 않은 탭끼리, 그리고 선택되지 않은 마지막 탭과 + 사이는 글자 높이만 한 세로선으로 나눈다. 선택된 탭 옆에는 두지 않는다. */
+  .tab:not(.active) + .tab:not(.active)::before, .tab:last-child:not(.active)::after {
+    content: ''; position: absolute; left: -2px; top: 7px; width: 1px; height: 14px; background: var(--sep); }
+  .tab:last-child:not(.active)::after { left: auto; right: -2px; }     /* 마지막 탭과 + 사이(#tabs의 오른쪽 2 px 안) */
   .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   button { border: 0; border-radius: 4px; background: none; color: var(--text); font: 10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; flex: none; }
   button:hover { background: var(--hover); }
   .x { width: 20px; height: 20px; font-size: 8px; }
-  #new { width: 32px; height: 24px; margin-left: 2px; font-size: 12px; }
+  #new { width: 32px; height: 24px; font-size: 12px; }
   #close { width: 32px; height: 24px; margin: 0 4px 0 auto; }
   /* 터미널은 모두 같은 자리에 겹친다. display: none과 달리 숨은 터미널도 크기를 잴 수 있어 함께 맞춘다(M9 설계 3.3절). */
   .term { position: absolute; inset: 30px 0 0 6px; visibility: hidden; }

@@ -9,6 +9,7 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
 
 namespace Sill.Host
@@ -110,9 +111,9 @@ namespace Sill.Host
                         Action<string> notice = s => { Log("안내: {0}", s); Out("\x1b[90m[Sill] " + s + "\x1b[0m\r\n"); };
                         shell = Shell.Choose(shellArg, notice);
                         if (shell == null) { Flush(pipe); pipe.WaitForPipeDrain(); return; }   // 안내 줄을 band가 읽은 뒤에 닫는다
-                        // zip 안처럼 탐색기에서만 열리는 폴더, 그 셸이 갈 수 없는 폴더(cmd의 UNC)면 홈에서 시작한다.
+                        // zip 안처럼 탐색기에서만 열리는 폴더, 그 셸이 갈 수 없는 폴더(cmd의 UNC), 답이 없는 네트워크 폴더면 홈에서 시작한다.
                         string dir = sync.StartDir;
-                        if (!Directory.Exists(dir) || (shell.Cd != null && shell.Cd(dir) == null))
+                        if (!DirectoryExists(dir, 2000) || (shell.Cd != null && shell.Cd(dir) == null))
                         {
                             Log("시작 폴더 아님 {0}", dir);
                             dir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -143,6 +144,14 @@ namespace Sill.Host
                 }
                 Log("파이프 끊김");
             }
+        }
+
+        // 끊긴 네트워크 경로의 확인은 20초 넘게 걸린다. 파이프 읽기 스레드에서 부르므로 ms 안에 답이 없으면 없는 것으로 본다.
+        // 확인 작업은 뒤에서 끝나도록 둔다(M8 후속).
+        static bool DirectoryExists(string path, int ms)
+        {
+            var check = Task.Run(() => Directory.Exists(path));
+            return check.Wait(ms) && check.Result;
         }
 
         // 보낼 출력. 출력 조각마다 메시지를 보내면 탐색기의 band가 메시지마다 UI 스레드를 깨운다(대량 출력 중 탐색기 CPU 57 %, M8 설계 2.2절).
@@ -280,11 +289,15 @@ namespace Sill.Host
             return pty;
         }
 
+        // 파이프 읽기 스레드(사용자 입력), 폴더 작업 스레드와 Pump(Sill의 cd)가 함께 부른다. FileStream은 스레드에 안전하지 않다(M8 후속).
         public void Write(string s)
         {
             var b = Encoding.UTF8.GetBytes(s);
-            _input.Write(b, 0, b.Length);
-            _input.Flush();
+            lock (_input)
+            {
+                _input.Write(b, 0, b.Length);
+                _input.Flush();
+            }
         }
 
         public void Resize(short cols, short rows)

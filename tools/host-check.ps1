@@ -3,7 +3,7 @@
 # M2: c(탐색기 폴더)를 셸 상태에 맞게 처리하는가. 시작 폴더, 대기 중 cd, 실행 중·입력 중 건너뜀, 빠른 연속 이동.
 # M3: 셸의 cd를 p(셸 폴더)로 알리고, 탐색기가 따라온 뒤 돌려주는 c에는 cd를 넣지 않는가.
 # M4: 위 항목을 셸마다(powershell, pwsh, cmd, gitbash) 돌린다. 사용자의 settings.json은 건드리지 않는다.
-# M8: 출력 묶기, 되울림 지연, 파이프 ACL, PS1을 매번 쓰는 .bashrc, 낡은 되먹임 항목, 끊긴 네트워크 경로 뒤 입력.
+# M8: 출력 묶기, 되울림 지연, 파이프 ACL, PS1을 매번 쓰는 .bashrc, 낡은 되먹임 항목, 끊긴 네트워크 경로 뒤 입력, 끊긴 시작 폴더.
 param([ValidateSet('powershell', 'pwsh', 'cmd', 'gitbash')] [string]$Shell = 'powershell')
 $ErrorActionPreference = 'Stop'
 $base = Join-Path $env:TEMP ('sill-check-' + [guid]::NewGuid().ToString('N'))
@@ -189,8 +189,10 @@ if ($Shell -eq 'gitbash') {
 }
 
 # M8: 끊긴 네트워크 경로의 폴더 확인(약 21 s)이 입력을 막지 않는다. 뒤의 c가 밀리므로 맨 끝에 둔다.
+# 응답하지 않는 문서용 주소(192.0.2.0/24). Windows는 응답 없던 서버를 잠시 기억해 다음 확인이 바로 끝나므로, 항목마다 다른 주소를 쓴다.
+function Get-DeadPath { '\\192.0.2.{0}\x' -f (Get-Random -Minimum 1 -Maximum 255) }
 $ok = ([regex]::Matches($script:text, 'sill-ok')).Count
-Send 'c\\192.0.2.1\x'; Start-Sleep -Milliseconds 100
+Send ('c' + (Get-DeadPath)); Start-Sleep -Milliseconds 100
 $sw.Restart(); Send "i$($c.ok)`r"
 $fast = WaitFor { ([regex]::Matches($script:text, 'sill-ok')).Count -gt $ok } 30
 $info['끊긴 경로 뒤 입력'] = '{0:F0} ms' -f $sw.Elapsed.TotalMilliseconds
@@ -205,6 +207,21 @@ $exited = $hostProc.WaitForExit(5000)
 Start-Sleep -Milliseconds 500
 $left = @($children | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
 $results['정리'] = $exited -and $left.Count -eq 0
+
+# M8 후속: 시작 폴더가 끊긴 네트워크 경로여도 셸이 곧 뜬다. 확인은 2초까지만 기다리고 홈에서 시작한다.
+$name = 'sill-check-' + [guid]::NewGuid().ToString('N')
+$hostProc = Start-Process "$PSScriptRoot\..\bin\sill-host.exe" "$name $Shell" -PassThru
+$pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', $name, 'InOut', 'Asynchronous')
+$pipe.Connect(5000)
+$pipe.ReadMode = 'Message'
+$script:text = ''; $script:atStart = $true; $script:t = $null
+$sw.Restart()
+Send ('c' + (Get-DeadPath)); Send 'r100,30'
+$started = WaitFor { (Prompts) -gt 0 -and (Cwd) } 30
+$info['끊긴 시작 폴더 → 첫 프롬프트'] = '{0:F0} ms' -f $sw.Elapsed.TotalMilliseconds
+$results['끊긴 시작 폴더는 홈에서 곧 시작(5 s 이하)'] = $started -and $sw.Elapsed.TotalSeconds -le 5 -and (Cwd) -eq $env:USERPROFILE
+$pipe.Dispose()
+$hostProc.WaitForExit(5000) | Out-Null
 Remove-Item $base -Recurse -Force
 
 $info.GetEnumerator() | ForEach-Object { "{0}: {1}" -f $_.Key, $_.Value }

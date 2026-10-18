@@ -44,11 +44,29 @@ namespace Sill.Host
             Environment.Exit(0);
         }
 
+        // 강제로 끝난 sill-host는 cd 파일을 지우지 못한다. 끝난 PID의 파일만 지운다. 살아 있는 세션의 파일을 지우면 그 세션의 cd 숨김이 꺼진다(M5 설계 3.4절).
+        static void DeleteStaleKeyFiles()
+        {
+            try
+            {
+                foreach (var f in Directory.GetFiles(Path.GetDirectoryName(KeyFile), "cd-*.txt"))
+                {
+                    int pid;
+                    var id = Path.GetFileNameWithoutExtension(f).Substring(3);
+                    if (!int.TryParse(id, out pid)) continue;
+                    try { Process.GetProcessById(pid).Dispose(); }
+                    catch (ArgumentException) { File.Delete(f); Log("남은 cd 파일 지움 {0}", pid); }
+                }
+            }
+            catch (Exception e) { Log("cd 파일 정리 실패: {0}", e.Message); }
+        }
+
         // shellArg: 셸 값(host-check용). 없으면 settings.json을 따른다(M4 설계 3.4절).
         static void Run(string pipeName, string shellArg)
         {
             Log("시작 pipe={0}", pipeName);
             KillChildrenOnExit();
+            DeleteStaleKeyFiles();
             File.Delete(KeyFile);
             Environment.SetEnvironmentVariable("SILL_CD", KeyFile);   // 셸이 물려받는다
             // 파이프는 현재 사용자만 연다. 기본 DACL은 Everyone에게 읽기를 준다(M8 설계 3.5절).

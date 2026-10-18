@@ -2,10 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 진행 방식
-
-milepost로 진행한다. 상태는 `milepost/state.json`에 있고, 프로포절·마일스톤 설계·결과 보고서는 `milepost/html/sill/`(PDF는 `milepost/pdf/sill/`)에 있다. 설계 결정의 근거는 이 보고서들과 `PROPOSAL.md`다.
-
 ## 명령
 
 .NET SDK가 없다. Windows에 들어 있는 `csc.exe`(C# 5 문법: 문자열 보간·`?.`·`nameof` 사용 불가)로 빌드한다. 스크립트는 PowerShell 5.1에서 읽히도록 UTF-8 BOM으로 저장한다.
@@ -16,12 +12,14 @@ powershell -ExecutionPolicy Bypass -File .\tools\host-check.ps1 [-Shell powershe
 powershell -ExecutionPolicy Bypass -File .\tools\register.ps1      # HKCU에만 등록 (관리자 권한 불필요): band, Run의 상주 프로세스, 폴더 빈 곳 오른쪽 클릭 메뉴 "Open in Sill"
 powershell -ExecutionPolicy Bypass -File .\tools\toggle.ps1 on|off # 열린 모든 탐색기 창(탭)에 ShowBrowserBar
 powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 전부 삭제와 상주 프로세스 종료 (탐색기가 계속 죽을 때 탈출구)
+powershell -ExecutionPolicy Bypass -File .\tools\package.ps1       # dist\Sill-Setup-<버전>.exe (installer\sill.iss, Inno Setup 7.1.0을 deps\에 휴대용으로 받음). bin\을 먼저 빌드
 ```
 
 - 사용자 기능(M6): `Ctrl+``(패널 열기·포커스·닫기)와 `Ctrl+Shift+``(새 터미널, M9)는 상주 프로세스 `sill-host.exe keys`(HKCU `Run`, 뮤텍스로 하나)가 탐색기 창이 전경일 때만 `RegisterHotKey`로 받는다. 오른쪽 클릭 메뉴는 `sill-host.exe open "%V"`(전경이 탐색기 창이 아니면, 예를 들어 바탕 화면이면, 그 폴더로 탐색기를 열고 `Shell.Application.Windows()`에서 그 경로를 보는 새 항목을 찾아 패널을 켬, M8). 둘 다 활성 탭의 band 창(제목 `Sill`, 패널이 닫혀 있어도 숨은 채 남음)에 `Sill.Key` 창 메시지(wParam 0 토글, 1 새 터미널, 2 포커스)를 보내고, 닫힌 패널은 band가 스스로 연다(새 터미널이면 터미널을 먼저 만들고 엶). band 창이 없을 때만(그 탭에서 처음) 상주 프로세스가 `ShowBrowserBar`로 연다(M9). 페이지는 `Ctrl+,`(settings.json을 메모장으로), `Ctrl+PageUp/PageDown`(이전·다음 터미널, 끝에서 돌아감), VS Code의 스크롤 키를 처리한다. 사용자에게 보이는 문구는 영어, 로그는 한국어.
 - 패널 모양(M7): 탐색기의 왼쪽 띠 머리(×, 세로 제목)는 없애고, 페이지가 Windows Terminal 같은 탭 줄을 그린다. M9부터 높이 28 px, 탭이 줄 높이를 다 채우고(폭 200 px에서 72 px까지 줄어듦) 제목·탭 ×·+·패널 ×는 모두 줄 가운데. 터미널마다 탭과 탭 ×(20 px, 모든 탭에 보임, 가운데 클릭도 닫음), 탭 바로 뒤 +(32 px), 오른쪽 끝에 패널 닫기 ×(32 px). 선택되지 않은 탭끼리, 그리고 선택되지 않은 마지막 탭과 + 사이는 높이 14 px의 세로선으로 나눈다(선택된 탭 옆에는 없음). 탭 제목은 프로그램이 보낸 창 제목(OSC 0·2, xterm.js `onTitleChange`), 시작 제목은 sill-host가 `STARTUPINFO.lpTitle`로 준 셸 이름(`powershell`·`pwsh`·`cmd`·`bash`, 그 밖은 명령줄 첫 낱말). 색은 Windows 앱 모드(`AppsUseLightTheme`)를 따른다: 페이지는 `prefers-color-scheme`, band는 레지스트리(바뀌면 페이지가 `t`로 알림). 탐색기 실측 색: 다크 내용 #191919·탭 줄/틀 #202020·분할선 선 #2B2B2B, 라이트 #FFFFFF·#E8E8E8·#F7F7F7. xterm.js `minimumContrastRatio` 4.5. "Open in Sill" 아이콘은 `assets/sill.ico`(큰 크기는 개발자의 `sill.svg`를 Edge 헤드리스로 그린 것, 16·20 px는 SVG를 줄이면 `>_`가 뭉개져 개발자가 고른 픽셀 시안)를 `sill-host.exe`에 넣고 메뉴 키 `Icon`이 가리킨다.
 - 로그: `%LOCALAPPDATA%\Sill\band.log`(band 호출, `이동 폴더`, `셸 폴더`, `Sill.Key n 보임=… 포커스=…`, `터미널 n 만듦(이유)`/`닫음(탭 × | exit)`/`다시 시작`, `터미널 n 셸 끝남 code=`, `p 건너뜀(뒤 터미널 n)`, `WebView2 다시 만들기`, `사이트 스타일`, `BaseBar … 서브클래스`, `앱 모드`, `닫기 버튼`, `띠 머리 남음`(BSIS_NOCAPTION이 안 들었을 때), `WebView2 안내`/`WebView2 다시 시도`(WebView2를 만들지 못함)), `host.log`(sill-host, `OSC 9;9`, `cd 보냄`/`cd 보냄(키)`/`c 건너뜀(이유)`/`c 보류`, `p 보냄`/`p 건너뜀`, `셸 시작 <셸>`, `셸 끝남 code=`, `안내: …`(설정 문제), `c 건너뜀(셸이 못 감)`, `입력 중 유지(프롬프트 다시 그림)`, `133;A 없는 133;B 무시`, `다시 그리기`, `설정 파일 만듦`, `시작 폴더 아님`), `keys.log`(상주 프로세스, `단축키 등록/해제`, `패널 열기`, `Sill.Key`, `메뉴`, `새 창에 패널 열기`). WebView2 데이터 폴더는 `%LOCALAPPDATA%\Sill\WebView2`. 로그에는 날짜가 없으니 시험에서는 줄 수로 표시해 두고 그 뒤를 읽는다.
 - 설정: `%LOCALAPPDATA%\Sill\settings.json`의 `{"shell": "..."}` 하나(powershell, pwsh, cmd, gitbash, 그 밖에는 명령줄 그대로). 없으면 pwsh가 PATH에 있으면 pwsh, 아니면 powershell. sill-host가 세션을 시작할 때마다 읽는다. 파일이 없을 때 `Ctrl+,`는 `{"shell": ""}`(빈 값 = 자동 선택)로 만든다(M8). 개발자의 PC에는 이 파일이 없다(시험 뒤 지울 것). 패널 높이는 탐색기가 끌기 직후 `Explorer Bars\{CLSID}\BarSize`(패널 높이 + 4 px)에 직접 저장한다(M4).
+- 배포(M5): 사용자는 Inno Setup 설치 프로그램으로 `%LOCALAPPDATA%\Programs\Sill`에 관리자 없이 설치한다. **등록 키는 `tools\register.ps1`(개발)과 `installer\sill.iss`(설치본) 두 곳에 있으므로 한쪽을 바꾸면 다른 쪽도 바꾼다.** 설치 프로그램은 쓰이는 파일(탐색기의 DLL, 열린 패널의 sill-host.exe)을 `*.old`로 이름 바꿔 비키고(관리자가 아니면 `restartreplace`가 듣지 않음), 제거 때 지우지 못한 폴더는 HKCU `RunOnce`로 다음 로그인 때 지운다. 로그는 1 MB를 넘으면 `.old`로 돌린다.
 - 작업 표시줄 explorer가 예전 DLL을 잡고 있으면 build.ps1이 `bin\Sill.Band.*.old`로 이름을 바꿔 치운다.
 - 개발 중에는 `HKCU\...\Explorer\Advanced\SeparateProcess=1`이 켜져 있다(원래 값 0). 새 폴더 창은 `explorer.exe /factory,...` 프로세스에서 열리므로 band가 죽어도 작업 표시줄은 살아남는다. 이 설정 전에 열려 있던 창은 작업 표시줄 프로세스에 있으니 시험에 쓰지 않는다.
 - 자동화 테스트는 host-check.ps1 하나다(M1 입출력·정리 + M2 상태 판정 + M3 `p`·되먹임 목록 + M4 셸별 항목 + M6 cd 숨김·같은 크기 `r` 다시 그리기·종료 줄 + M7 같은 크기 `r` 뒤 제목 + M8 출력 묶기·되울림 지연·파이프 ACL·PS1을 매번 쓰는 `.bashrc`(Git Bash 시험 HOME)·낡은 되먹임 항목·끊긴 네트워크 경로(`\\192.0.2.x\x`, 약 21 s) 뒤 입력·끊긴 시작 폴더 + M9 종료 줄 뒤 `e0` + M10 시작 제목 0.3 s 이하·셸을 띄우는 동안 band 쪽 쓰기 10 ms 이하). sill-host의 두 번째 인수로 셸을 주므로 settings.json을 건드리지 않는다. 나머지 확인은 PowerShell `Shell.Application.Windows()`로 창을 잡아 `ShowBrowserBar`·`Navigate2`를 부르고, band.log·host.log와 `PrintWindow` 캡처로 한다.
@@ -58,6 +56,13 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
   - 개발자가 시험 창에 탭을 더해 자기 폴더를 열 수 있다. 시험 창을 닫기 전에 탭이 하나인지 보고, 여럿이면 `Quit`하지 않는다. 시험 폴더를 지우기 전에도 그 폴더를 보는 창이 없는지 본다.
   - 시험 스크립트는 탐색기를 열기 전에 폴더가 있는지 본다. 없는 폴더로 `explorer.exe`를 열면 오류 창 대신 "문서" 창이 열렸다.
   - 탭·+·× 좌표는 band 창 폭(탐색기 창보다 16 px 좁음)과 지금 탭 폭(200 px, M9 결과 리뷰에서 바뀜)으로 계산한다. 예전 값으로 계산해 시험이 엉뚱한 곳을 누른 적이 두 번 있다.
+- M5 시험에서 배운 것:
+  - CodeBase는 regasm처럼 `file:///` + 경로(이스케이프 없음)로 쓴다. `[Uri].AbsoluteUri`처럼 한글을 `%XX`로 바꾸면 탐색기가 band를 적재하지 않았다(한글 사용자 이름이면 패널이 안 뜸). 경로에 `#`이 있으면 어떤 꼴(`%23` 포함)로도 적재되지 않아 register.ps1과 설치 프로그램이 거부한다.
+  - 설치본 시험은 개발 등록을 설치본으로 바꿨다가 register.ps1로 되돌린다. 제거가 `%LOCALAPPDATA%\Sill`(로그·WebView2 데이터)을 지우므로 시험 전에 백업하고, 시험 로그는 제거 전에 따로 보관한다(복원이 로그를 덮어 원인을 잃은 적이 있음). 남은 RunOnce 값은 반드시 지운다(다음 로그인 때 폴더를 지움).
+  - 관리 어셈블리(Sill.Band.dll)는 프로세스 모듈 목록에 나오지 않는다. 어느 band가 적재됐는지는 같은 폴더의 `WebView2Loader.dll` 경로로 본다. 창을 닫아도 폴더 창 탐색기 프로세스가 잠시 남아 DLL을 쥐므로, 다른 창이 없을 때만 그 PID를 끝낸다.
+  - PowerShell에서 `string` 인수에 `$null`을 넘기면 빈 문자열이 된다. `FindWindowEx(…, 'ShellTabWindowClass', $null)`은 탭을 못 찾으므로 `[NullString]::Value`를 쓴다.
+  - Inno 7의 마법사 제목은 `Setup - Sill 0.1.0`(버전 포함)이고, 메시지 상자 버튼은 시스템 언어(`예(&Y)`, `확인`)다. 마법사 버튼은 `BM_CLICK`을 `PostMessage`로 보낸다. 마법사를 띄운 시험은 출력 파이프를 물려받지 않게 하고(Out-String이 끝나지 않음), `Start-Process -Wait`는 자손(register.ps1이 띄운 상주 프로세스)까지 기다리므로 쓰지 않는다.
+  - 개발자의 터미널이 전경이면 새 탐색기 창이 전경이 되지 않는다. Alt를 한 번 눌렀다 뗀 뒤 `SetForegroundWindow`를 부르면 된다(Alt는 터미널로 가지만 아무 일도 없음).
 
 ## 프로젝트 개요
 
@@ -102,4 +107,3 @@ powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1    # 등록 키 
 
 - 설치·제거는 관리자 권한 없이 HKCU 등록만으로 한다.
 - Windows 10 이상만 지원한다. 현재 범위 밖: SSH, 분할 터미널. 한 탭에 여러 터미널은 M9에서 했다(`Ctrl+Shift+``는 VS Code처럼 "새 터미널"). 언어는 영어 하나로 둔다(언어 패치는 하지 않기로 함).
-- 마일스톤은 M0(빈 band를 Win11 탐색기에 표시)부터 M5(배포)까지 순서대로 진행한다. M0이 실패하면 터미널 창 도킹 방식으로 방향을 바꾼다. 자세한 내용은 `PROPOSAL.md` 4–5절에 있다.

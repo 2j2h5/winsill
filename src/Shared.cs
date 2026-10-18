@@ -45,15 +45,27 @@ namespace Sill
 
         // %LOCALAPPDATA%\Sill\<file>에 "시각 [PID] 내용" 한 줄. 여러 프로세스(탐색기 창들, sill-host들)가 같은 파일에 쓴다.
         // 덧붙이기 전용으로 열고 서로 쓰기를 허락해야 공유 위반으로 줄이 사라지지 않는다(M10 설계 3.5절).
+        // 1 MB를 넘으면 <file>.old로 옮긴다(M5 설계 3.4절). FileShare.Delete라 다른 프로세스가 쓰는 중에도 옮겨진다.
+        // ponytail: 두 프로세스가 동시에 옮기면 늦은 쪽이 방금 옮긴 .old를 지울 수 있다. 로그라서 그대로 둔다.
         public static void Log(string file, string format, params object[] args)
         {
             try
             {
                 if (!_logDirMade) { Directory.CreateDirectory(LogDir); _logDirMade = true; }
+                var path = Path.Combine(LogDir, file);
                 var b = Encoding.UTF8.GetBytes(string.Format("{0:HH:mm:ss.fff} [{1}] {2}\r\n", DateTime.Now, Pid, string.Format(format, args)));
-                using (var f = new FileStream(Path.Combine(LogDir, file), FileMode.Append, FileSystemRights.AppendData,
+                long length;
+                using (var f = new FileStream(path, FileMode.Append, FileSystemRights.AppendData,
                     FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.None))
+                {
                     f.Write(b, 0, b.Length);
+                    length = f.Length;
+                }
+                if (length > 1 << 20)
+                {
+                    File.Delete(path + ".old");
+                    File.Move(path, path + ".old");
+                }
             }
             catch { }
         }

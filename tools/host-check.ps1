@@ -27,6 +27,12 @@ if ($Shell -eq 'gitbash') {
     [IO.File]::WriteAllText("$home2\.bashrc", "alias sillalias='echo alias-''ok'`nPROMPT_COMMAND='PS1=`"\w\$ `"'`n")
     $env:HOME = $home2.FullName
 }
+# M5: 강제로 끝난 sill-host가 남긴 cd 파일은 다음 세션이 지운다. 살아 있는 프로세스(이 스크립트)의 파일은 남긴다.
+$sillDir = Join-Path $env:LOCALAPPDATA 'Sill'
+New-Item -ItemType Directory $sillDir -Force | Out-Null
+$deadPid = 4000000; while (Get-Process -Id $deadPid -ErrorAction SilentlyContinue) { $deadPid += 4 }
+$deadKey = "$sillDir\cd-$deadPid.txt"; $liveKey = "$sillDir\cd-$PID.txt"
+[IO.File]::WriteAllText($deadKey, ''); [IO.File]::WriteAllText($liveKey, '')
 $name = 'sill-check-' + [guid]::NewGuid().ToString('N')
 $hostProc = Start-Process "$PSScriptRoot\..\bin\sill-host.exe" "$name $Shell" -PassThru
 $pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', $name, 'InOut', 'Asynchronous')
@@ -70,6 +76,8 @@ $results['시작 제목(0.3 s 이하)'] = (WaitFor { $script:text.Contains("$([c
 $info['시작 제목'] = '{0:F0} ms' -f $sw0.Elapsed.TotalMilliseconds
 $results['시작 폴더'] = WaitFor { (Cwd) -eq $dirA.FullName -and (Prompts) -gt 0 } 30
 Start-Sleep 1      # 프로필이 프롬프트를 두 번 그리는 경우까지 기다린다
+$results['남은 cd 파일 정리'] = -not (Test-Path $deadKey) -and (Test-Path $liveKey)
+Remove-Item $deadKey, $liveKey -ErrorAction SilentlyContinue
 
 # 입력 에코에는 'sill-ok'가 그대로 나오지 않고, 실행 결과에만 나온다.
 $n = Prompts; Send "i$($c.ok)`r"; WaitPrompt $n

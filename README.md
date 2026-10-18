@@ -1,13 +1,27 @@
-# Sill
+# Sill: a terminal panel for Windows File Explorer
 
-A terminal panel at the bottom of Windows File Explorer, like the one in KDE Dolphin.
+[![Latest release](https://img.shields.io/github/v/release/2j2h5/winsill)](https://github.com/2j2h5/winsill/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/2j2h5/winsill)](LICENSE)
+![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4)
 
-![Sill in File Explorer](assets/screenshot.png)
+Sill adds an integrated terminal to the bottom of File Explorer on Windows 11 and Windows 10, like the terminal panel in KDE Dolphin. Open PowerShell, Command Prompt (cmd) or Git Bash in the folder you are looking at, and File Explorer and the terminal follow each other's current folder.
+
+![Sill: a PowerShell terminal panel docked at the bottom of a Windows 11 File Explorer window, with two terminal tabs](assets/screenshot.png)
 
 Sill extends File Explorer itself. It is not a replacement file manager. The panel and the folder window stay in sync:
 
 - When you go to another folder in File Explorer, the terminal runs `cd` to follow, but only while the shell is waiting at its prompt.
 - When you `cd` in the terminal, File Explorer goes to that folder.
+
+## Features
+
+- **Terminal inside File Explorer:** a panel at the bottom of every File Explorer window. `` Ctrl+` `` opens and closes it, like the terminal in VS Code.
+- **Two-way folder sync:** File Explorer and the shell stay in the same folder. Sill never types into a running program such as Claude Code or `vim`.
+- **Terminal tabs:** several terminals per window, with VS Code keys (`` Ctrl+Shift+` ``, `Ctrl+PageUp`/`Ctrl+PageDown`).
+- **Your shell:** PowerShell 7, Windows PowerShell, cmd, Git Bash, or any command line.
+- **"Open in Sill"** on the right-click menu of a folder background.
+- **Light and dark themes** that follow Windows.
+- **No administrator rights:** per-user install and uninstall, registered under HKCU only.
 
 ## Requirements
 

@@ -1,0 +1,11 @@
+{
+  "name": "sill",
+  "owner": { "name": "Sill" },
+  "plugins": [
+    {
+      "name": "sill",
+      "source": "./sill",
+      "description": "Rings the terminal bell in Sill when Claude Code finishes, asks for permission, or stops on an error."
+    }
+  ]
+}

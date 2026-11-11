@@ -3,7 +3,7 @@
 CLAUDE.md에서 옮긴, 탐색기를 띄우는 시험의 요령과 겪은 일이다. 탐색기 창·키 입력·캡처를 쓰는 시험 전에 읽는다.
 M0–M11은 0.1.0까지의 개발 단계로 공개 저장소의 커밋 제목(`M8: …`)과 같고, 0.1.1은 0.1.1 릴리스의 작업이다.
 
-- `Navigate2`에는 **존재하는 경로만** 넘긴다. 없는 경로면 탐색기가 개발자 화면에 "경로 또는 주소가 정확한지 확인" 오류 창을 띄우고 0x800704C7을 돌려준다(M2에서 겪음. 빈 폴더는 `Compress-Archive`가 zip에 넣지 않는 것도 원인이었다). `powershell -File`에 배열 인수를 넘기면 하나의 문자열로 합쳐지는 것도 주의한다. `Navigate2`의 새 탭 플래그(0x800)는 무시되므로, 탭이 필요한 시험은 개발자에게 + 버튼 클릭을 부탁한다.
+- `Navigate2`에는 **존재하는 경로만** 넘긴다. 없는 경로면 탐색기가 개발자 화면에 "경로 또는 주소가 정확한지 확인" 오류 창을 띄우고 0x800704C7을 돌려준다(M2에서 겪음. 빈 폴더는 `Compress-Archive`가 zip에 넣지 않는 것도 원인이었다). `powershell -File`에 배열 인수를 넘기면 하나의 문자열로 합쳐지는 것도 주의한다. `Navigate2`의 새 탭 플래그(0x800)는 무시되므로, 탭이 필요한 시험은 Ctrl+T로 연다(0.1.1 M4).
 - **패널에 SendInput으로 키를 보내는 시험은 포커스가 band 창의 자손인지 키마다 확인한 뒤에만 한다.** 탐색기 창 안 어딘가로만 확인하면 키가 파일 목록으로 가서 실제 파일 작업(복사·삭제·창 닫기)이 일어난다(M1에서 겪음). WebView2의 포커스 창은 msedgewebview2 스레드에 있으므로 패널 자손 창들의 스레드마다 `GetGUIThreadInfo`로 본다. 개발자가 다른 창을 쓰는 중이면 전경 잠금 때문에 시험 창을 앞으로 가져올 수 없으니, 패널 클릭을 부탁하고 기다린다. 클릭 뒤 시험이 끝날 때까지 다른 창으로 옮기지 말아 달라고도 부탁한다(M3에서 클릭 직후 개발자가 다른 창으로 가서 한 번 멈춤).
 - 시험 스크립트의 `Navigate2`도 파일 목록에 포커스를 가져간다. 그 뒤 키를 보내려면, 시험 창이 전경이고 `WindowFromPoint`가 band(또는 자식) 창일 때만 패널 아래쪽을 마우스로 클릭해 포커스를 되찾는다(M4). 패널에서 `exit`로 셸을 바꿀 때는 band.log의 `sill-host 끊김`을 본 뒤에 다시 시작 키를 보낸다(먼저 보내면 끝나 가는 셸이 먹는다).
 - 끊긴 네트워크 경로는 응답하지 않는 문서용 주소(192.0.2.0/24)로 흉내 낸다. Windows는 응답 없던 서버를 잠시 기억해 같은 주소의 다음 확인이 1 ms에 끝나므로, 시험마다 다른 주소를 쓴다(M8 후속에서 겪음).
@@ -50,3 +50,35 @@ M0–M11은 0.1.0까지의 개발 단계로 공개 저장소의 커밋 제목(`M
 - 0.1.1 M3 시험에서 배운 것:
   - GitHub 러너(windows-2025)는 영어 Windows다(로캘 en-US, 코드 페이지 OEM 437·ANSI 1252). 이 PC(949)에서는 보이지 않는 코드 페이지 문제가 host-check로 드러난다(PSReadLine `InvokePrompt`가 그린 프롬프트의 한글이 `??`). 실패한 실행의 로그는 `gh run download <id> -n logs`로 받는다.
   - 이 세션이 Sill 패널 안이면 build.ps1 대신 임시 폴더에 `bin\`과 `tools\host-check.ps1`을 두고 csc로 sill-host만 빌드해 host-check를 돌린다(host-check는 `..\bin\sill-host.exe`를 쓴다). 개발자의 `bin\`과 세션은 그대로다.
+- 0.1.1 M4 시험에서 배운 것:
+  - 설치 프로그램은 쓰이는 파일을 `이름.20261018211413603.old`처럼 시각을 붙여 비킨다. 시험은 `이름.*.old`로 찾는다.
+  - 설치 프로그램은 상주 프로세스를 띄우고 기다리지 않는다. 설치가 끝난 뒤 약 1초 지나 keys.log에 `시작` 줄이 찍히므로 그 줄을 기다린 뒤 확인한다.
+  - 같은 위치에 겹쳐 열린 `/separate` 창이 있으면, 새 시험 창이 전경인데도 `WindowFromPoint`가 아래 창의 WebView2 렌더 창을 돌려줬다(이유는 모름). 다른 시험 창은 최소화하거나 닫고, 실패한 시험이 남긴 창도 다음 실행 전에 닫는다.
+  - 탭이 둘인 창은 `IWebBrowser2.Quit`(탭마다 불러도)으로 닫히지 않았다. 창에 `WM_CLOSE`를 게시하면 닫혔다. 창이 남으면 그 탐색기 프로세스가 DLL과 WebView2 데이터를 쥐어 RunOnce 정리가 실패한다.
+  - 데이터 복원 robocopy에는 `/R:0 /W:0`을 붙인다. 기본값(100만 번, 30초 간격)이면 잠긴 WebView2 파일에서 끝나지 않는다. 시험 창의 탐색기 프로세스를 먼저 끝낸다.
+  - 파일 목록에 포커스가 있을 때(패널이 아님을 확인) Ctrl+T를 보내면 새 탭이 열리고, `Shell.Windows()`에 "내 PC"(`LocationURL` 빈 값)로 나타난다. 그 항목에 `Navigate2`와 `ShowBrowserBar`를 부르면 된다. 이미 band가 적재된 탐색기 프로세스라면 새 탭도 그 어셈블리를 쓰고 페이지는 디스크에서 새로 읽는다(업데이트 뒤 섞인 상태 시험).
+- 0.1.2 M1 시험에서 배운 것(탭 떼기, `tools\tearoff-check.ps1`):
+  - 탭 끌기는 `SetCursorPos`로 옮기면 떨어지지 않았다. `mouse_event`의 MOVE|ABSOLUTE(실제 입력)로 옮기고, 누르기 앞 200 ms·뒤 150 ms·놓기 앞 300 ms를 멈춘다.
+  - 떼낸 새 창은 SeparateProcess가 0이어도 작업 표시줄 탐색기가 아니라 폴더 창 탐색기 프로세스(`/factory,{ceff45ee-…}`)에 생긴다. 그 프로세스가 예전 band DLL을 적재하고 있으면 새 창은 예전 band다. 창이 없을 때 그 프로세스를 끝낸 뒤 시험한다(Claude Code에서는 개발자가 `! taskkill //PID n //F`로 끝냈다. `!`는 Git Bash라 `//`).
+  - 떼낸 창은 화면 왼쪽 위에 크게 열려 원래 창의 탭 줄을 가리기도 했다. 다시 붙이기 전에 `SetWindowPos`로 옮긴다.
+  - 다른 창의 탭 줄에 놓으면 그 창이 지금 탭을 활성으로 둔 채 먼저 앞에 나오고, 놓은 탭은 조금 뒤 활성이 된다. 창의 마지막 탭을 옮기면 원래 창은 사라진다(창 닫기와 같아 보임).
+  - Sill 패널 안의 셸에서 띄운 상주 프로세스(register.ps1)는 그 탭이 닫힐 때 sill-host의 작업 개체(KILL_ON_JOB_CLOSE)와 함께 끝났다. 작업 개체 밖에서 띄우려면 WMI `Win32_Process.Create`를 쓴다.
+  - PowerShell 함수가 `@(...)`를 돌려줘도 하나뿐이면 풀려서 `.Count`가 빈다. 부르는 쪽을 `@(Get-Tabs …)`로 감싼다. host.log의 `셸 시작` 뒤 이름은 `powershell.exe`처럼 확장자가 붙기도 한다.
+  - 탭을 닫은 직후 `Shell.Windows()`에서 남은 탭의 개수 확인이 빗나갔다(위의 풀림 탓). 창 닫기 반복은 `IsWindowVisible`로 끝낸다. 두 탭 창은 `WM_CLOSE` 한 번에 탭 하나만 닫히기도 했다.
+  - 상주 프로세스가 작업 개체 안인지는 `QueryInformationJobObject(NULL, 9)`로 묻는다(작업 밖이면 실패). 탐색기 없이 확인하려면 sill-host 세션 안에서 `sill-host.exe keys`를 띄우고 그 세션을 끝낸 뒤 keys.log와 프로세스를 본다.
+  - 등록 이벤트 다시 붙기는 작업 표시줄 탐색기를 다시 띄워야 볼 수 있다. SeparateProcess=1이면 작업 관리자의 "Windows 탐색기" 다시 시작은 폴더 창 프로세스를 다시 띄웠다. 작업 표시줄 탐색기를 `taskkill /F`로 끝내자 폴더 창 프로세스가 남아 있어서인지 자동으로 다시 뜨지 않았다(AutoRestartShell=1). `explorer.exe`를 띄우면 작업 표시줄이 돌아오고, keys.log에 `탭 등록 이벤트 끊김`(10 s 확인 안)과 `받음`(작업 표시줄이 뜬 뒤 3 s)이 남았다.
+  - 넘기지 말아야 하는 경우(패널이 있는 탭·창을 닫고 0.3 s 뒤 같은 폴더의 다른 창을 앞으로)는 keys.log의 `넘김 안 함(새 탭 없음|창을 닫음)`과 그 창에 band가 없는지로 본다.
+  - 탐색기 탭의 × 단추는 UI Automation으로 `TabItem` 아래 `Button`("탭 닫기")을 찾아 `InvokePattern`으로 누를 수 있다.
+  - 새 패널의 WebView2 준비가 가끔 6–12 s 걸린다(band.log 약 150번 중 7번, 중앙값 0.25 s). 0.1.2 전부터 있던 것이라 떼기 시험의 "놓은 뒤 2 s" 판정이 이것 때문에 빗나가면 band.log의 `WebView2 준비` 시각을 본다.
+- 0.2.0 M2 시험에서 배운 것(알람, 에이전트 CLI):
+  - Claude Code를 sill-host 안에서 시험할 때는 CLAUDE*·AI_AGENT 환경 변수를 지우고, 설정은 `--settings <임시 파일>`로 준다. 사용자 설정의 훅과 auto 모드를 빼려면 `--setting-sources local`, 권한 요청을 띄우려면 `--permission-mode default`와 ask 규칙(`Bash(mkdir:*)`)을 쓴다. 새 폴더는 신뢰 확인 창에서 멈추므로 이미 신뢰된 저장소 폴더에서 띄운다.
+  - 플러그인은 `--plugin-dir`로 설치 없이 실을 수 있다. 설치·제거(`claude plugin marketplace add`·`install`·`uninstall`·`marketplace remove`)는 임시 `CLAUDE_CONFIG_DIR`에서 인증 없이 대화 없이 된다. Claude Code는 설치한 플러그인을 `plugins\cache`로 복사하므로 `${CLAUDE_PLUGIN_ROOT}` 기준 상대 경로가 깨진다(두 번째 설치는 "loads in place"라고 알렸지만 installPath는 캐시였다).
+  - Codex는 시작할 때 업데이트·폴더 신뢰 선택 창을 띄운다. 시험 스크립트가 Enter를 보내 기본값 "Update now"가 골라져 개발자의 Codex가 0.159.2에서 0.167.1로 업데이트된 적이 있다. 선택 창(`enter continue`, `Trust`)이 보이면 입력하지 않고 멈춘다. 신뢰 결정은 config.toml에 저장되므로 이미 신뢰된 폴더에서 띄운다. 이 버전의 `-a`는 `on-request`·`never`뿐이다.
+  - ConPTY는 터미널이 보낸 `CSI I`·`CSI O`를 `?1004h`를 켠 프로그램에 그대로 넘긴다(node로 확인). Claude Code의 `terminal_bell`은 초점과 상관없이 권한 요청과 응답 뒤 약 60 s에만 벨을 냈다.
+  - 작업 표시줄 반짝임은 화면 아래 48 px를 0.25 s마다 캡처해 붉은 화소 수로 본다. 창이 전경이면 `FLASHW_TIMERNOFG`는 아무것도 보이지 않는다. 시험 창을 최소화해도 `GetForegroundWindow`는 그 창으로 남으므로, 창이 뒤인 경우는 둘째 `/separate` 창을 열어 만든다(새 창이 전경이 된다).
+  - 탐색기는 패널을 열 때 `ShowDW(True)`를 두 번 부른다. 상태를 바꾸는 처리는 보이는 상태가 바뀔 때만 한다.
+  - 배지는 `PrintWindow` 캡처의 탭 줄에서 이름 오른쪽의 원(다크 #FF99A4, 라이트 #C42B1C, 작업 표시줄이 반짝일 때의 표시선 색)으로, 초점은 커서 모양(빈 상자 = 초점 없음)으로 본다. 4 s마다 BEL을 내는 명령(`while(1){Start-Sleep 4; [Console]::Write([char]7)}`)을 터미널에 붙여 넣어 쓴다.
+  - 시험 스크립트에서: 함수가 줄 하나짜리 배열을 돌려주면 풀려서 `$l[0]`이 첫 글자가 된다(거짓 FAIL). 파이프 읽기에서 끝나지 않은 `ReadAsync`를 버리고 새로 읽으면 출력을 잃는다. Claude Code의 Bash 도구로 python heredoc에 `\\`를 넣으면 `\`로 바뀌어 `\b`가 백스페이스, `\u0007`이 BEL로 파일에 들어갔다. 파일은 Edit 도구로 고친다.
+  - Claude Code 백그라운드 세션(데몬 `claude daemon run` → `--bg-pty-host` → 세션)은 Sill 셸의 자식이 아니라 `TERM_PROGRAM`이 없고, Sill 터미널의 `claude`는 화면을 보여 주는 클라이언트다. 세션 콘솔에 쓴 BEL은 붙은 클라이언트를 거쳐 Sill에 닿는다. 어떤 훅이 어떤 명령으로 돌았는지는 대화 기록 JSONL의 `stop_hook_summary`(`hookInfos`)에서 본다. `/reload-plugins`는 Claude 캐시 사본이 아니라 다른 곳에서 훅을 읽었으므로(캐시를 고쳐도 옛 경로), 시험할 exe는 설치본 자리에 바꿔 넣는다(쓰이는 exe는 `.old`로 이름 바꾸기).
+  - 백그라운드 세션에서 결과를 보려고 백그라운드 대기를 걸고 턴을 끝내면, 세션은 "작업 중"으로 남아(`CLAUDE_JOB_DIR\timeline.jsonl`) 끝남·입력 대기 알림을 내지 않는다. 또 턴이 끝나는 순간 개발자가 그 터미널을 보고 있으면 알람이 없고 band.log에도 남지 않는다. 턴 끝 알람은 개발자가 메시지를 보낸 뒤 다른 앱으로 가고, 세션이 앞에서 기다린 뒤(`Start-Sleep`) 대기 없이 끝내서 본다.
+  - 설치 프로그램을 `Start-Process -Wait`로 돌리면 설치가 끝나도 돌아오지 않는다(설치 프로그램이 띄운 상주 프로세스를 기다림). 설치 로그(`/LOG=`)의 `Log closed.`로 끝을 본다.

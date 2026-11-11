@@ -5,9 +5,11 @@
 <link rel="stylesheet" href="xterm.css">
 <style>
   /* 탐색기와 같은 색(M7). 라이트 값은 band의 Theme과 같다. */
-  :root { --strip: #202020; --bg: #191919; --text: #ffffff; --hover: rgba(255, 255, 255, 0.06); --sep: rgba(255, 255, 255, 0.25); }
+  /* --alert: 작업 표시줄이 반짝일 때의 표시선 색(다크 #FF99A4, 이 PC에서 캡처). 라이트는 같은 계열(Windows의 Critical 색)이다(0.2.0 M2). */
+  /* --hover-tab: 선택되지 않은 탭의 바탕(전에 탭 전체에 걸던 0.75를 곱한 값). */
+  :root { --strip: #202020; --bg: #191919; --text: #ffffff; --hover: rgba(255, 255, 255, 0.06); --hover-tab: rgba(255, 255, 255, 0.045); --sep: rgba(255, 255, 255, 0.25); --alert: #ff99a4; }
   @media (prefers-color-scheme: light) {
-    :root { --strip: #e8e8e8; --bg: #ffffff; --text: #1a1a1a; --hover: rgba(0, 0, 0, 0.04); --sep: rgba(0, 0, 0, 0.2); }
+    :root { --strip: #e8e8e8; --bg: #ffffff; --text: #1a1a1a; --hover: rgba(0, 0, 0, 0.04); --hover-tab: rgba(0, 0, 0, 0.03); --sep: rgba(0, 0, 0, 0.2); --alert: #c42b1c; }
   }
   html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
   /* 탭 줄: Windows Terminal처럼 터미널마다 탭(M7). 높이 28 px(M9). 선택된 탭은 터미널과 같은 바탕이라 터미널로 이어진다.
@@ -15,18 +17,23 @@
   #strip { position: absolute; inset: 0 0 auto 0; height: 28px; background: var(--strip); display: flex; align-items: center;
            font: 12px "Segoe UI Variable Text", "Segoe UI", sans-serif; color: var(--text); user-select: none; }
   #tabs { display: flex; gap: 2px; margin-left: 8px; padding-right: 2px; min-width: 0; height: 100%; overflow: hidden; }
+  /* 선택되지 않은 탭은 흐리게(0.75). 알람 원은 작업 표시줄과 같은 색이어야 하므로 탭 전체가 아니라 이름·×·구분선·바탕에 따로 건다(0.2.0 M2). */
   .tab { width: 200px; flex-shrink: 1; min-width: 72px; height: 100%; box-sizing: border-box; position: relative; padding: 0 6px 0 12px;
-         border-radius: 8px 8px 0 0; display: flex; align-items: center; opacity: 0.75; }
-  .tab:hover { background: var(--hover); }
-  .tab.active { background: var(--bg); opacity: 1; }
+         border-radius: 8px 8px 0 0; display: flex; align-items: center; }
+  .tab:not(.active) > .title, .tab:not(.active) > .x { opacity: 0.75; }
+  .tab:hover { background: var(--hover-tab); }
+  .tab.active { background: var(--bg); }
   /* 선택되지 않은 탭끼리, 그리고 선택되지 않은 마지막 탭과 + 사이는 글자 높이만 한 세로선으로 나눈다. 선택된 탭 옆에는 두지 않는다. */
   .tab:not(.active) + .tab:not(.active)::before, .tab:last-child:not(.active)::after {
-    content: ''; position: absolute; left: -2px; top: 7px; width: 1px; height: 14px; background: var(--sep); }
+    content: ''; position: absolute; left: -2px; top: 7px; width: 1px; height: 14px; background: var(--sep); opacity: 0.75; }
   .tab:last-child:not(.active)::after { left: auto; right: -2px; }     /* 마지막 탭과 + 사이(#tabs의 오른쪽 2 px 안) */
-  .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .title { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  /* 보지 않는 동안 알람(벨, 알림 OSC)이 온 탭은 이름 오른쪽에 작은 원. 그 터미널이 초점을 받으면 지운다(0.2.0 M2). */
+  .dot { display: none; flex: none; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--alert); }
+  .tab.bell .dot { display: block; }
   button { border: 0; border-radius: 4px; background: none; color: var(--text); font: 10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; flex: none; }
   button:hover { background: var(--hover); }
-  .x { width: 20px; height: 20px; font-size: 8px; }
+  .x { width: 20px; height: 20px; font-size: 8px; margin-left: auto; }
   #new { width: 32px; height: 24px; font-size: 12px; }
   #close { width: 32px; height: 24px; margin: 0 4px 0 auto; }
   /* 터미널은 모두 같은 자리에 겹친다. display: none과 달리 숨은 터미널도 크기를 잴 수 있어, 보이게 하기 전에 맞춘다(M9, M10). */
@@ -39,9 +46,10 @@
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
 <script>
-// 화면과 입력만 맡는다. 메시지는 band를 거쳐 sill-host로 간다: r(크기) i(입력) s(설정 파일) / o(출력) x(세션 끝남) n(다시 시작). M1, M6.
+// 화면과 입력만 맡는다. 메시지는 band를 거쳐 sill-host로 간다: r(크기) i(입력) s(설정 파일) / o(출력) z(다시 틀기, 0.1.2) x(세션 끝남) n(다시 시작). M1, M6.
 // 한 터미널의 메시지는 종류 글자 뒤에 band가 붙인 번호와 빈칸이 온다(i2 dir). M9.
-// band가 직접 받는 것: h(패널 닫기) t(앱 모드가 바뀜) l(페이지가 떴다) +(새 터미널) a(활성 터미널) -(터미널 닫기) u(링크 열기). M7, M9.
+// band가 직접 받는 것: h(패널 닫기) t(앱 모드가 바뀜) l(페이지가 떴다) +(새 터미널) a(활성 터미널) -(터미널 닫기) u(링크 열기) f(배지를 지움). M7, M9.
+// band가 보내는 것: b(보지 않는 동안 알람이 옴, 탭 이름 오른쪽에 원). 0.2.0 M2.
 const host = window.chrome.webview;
 
 // 터미널 색표: 바탕은 탐색기의 내용 영역, ANSI 16색은 VS Code의 다크·라이트 기본값(M7).
@@ -69,6 +77,19 @@ const tabsEl = document.getElementById('tabs');
 const sendSize = t => {
   const r = t.term.cols + ',' + t.term.rows;
   if (r !== t.sentSize) host.postMessage('r' + t.id + ' ' + (t.sentSize = r));
+};
+
+// 새 페이지(탭을 떼어 다시 붙음, WebView2 복구)에 sill-host가 보관한 출력을 다시 튼다(0.1.2). 같은 바이트를 같은 크기로 넣어야 같은 화면이 된다.
+// z크기는 그 앞의 글을 다 그린 뒤(write 콜백) 그 크기로 바꾸고, z(끝)은 패널 크기로 돌아온다.
+// 다시 트는 동안의 크기 변화는 sill-host에 알리지 않는다. sill-host의 ConPTY는 지금 패널 크기 그대로다.
+const replay = (t, size) => {
+  t.replaying = true;
+  t.term.write('', () => {
+    if (size) { const [c, r] = size.split(','); t.term.resize(+c, +r); return; }
+    t.fit.fit();
+    t.replaying = false;
+    sendSize(t);
+  });
 };
 
 // 셸이 끝났거나 band가 같은 번호로 새 sill-host를 띄웠다. 새 셸은 크기를 받아야 시작한다.
@@ -117,10 +138,16 @@ function create(id) {
   term.open(el);
   const tab = document.createElement('div');
   tab.className = 'tab';
-  tab.innerHTML = '<span class="title"></span><button class="x" title="Close Terminal">&#xE8BB;</button>';
+  tab.innerHTML = '<span class="title"></span><span class="dot" title="Alert" role="img" aria-label="Alert"></span><button class="x" title="Close Terminal">&#xE8BB;</button>';
   tabsEl.appendChild(tab);
-  const t = { id, term, fit, el, tab, title: tab.firstChild, shellName: '', ended: false, newCommand: true, prompts: [], sentSize: '' };
+  const t = { id, term, fit, el, tab, title: tab.querySelector('.title'), shellName: '', ended: false, newCommand: true, prompts: [], sentSize: '', replaying: false };
   terms.set(id, t);
+  // 알람 배지는 그 터미널의 입력 칸이 초점을 받으면 지우고 band에 알린다. band는 보지 않는 동안 한 번만 알리려고 기억한다(0.2.0 M2).
+  term.textarea.addEventListener('focus', () => {
+    if (!tab.classList.contains('bell')) return;
+    tab.classList.remove('bell');
+    host.postMessage('f' + id);
+  });
 
   // 탭 제목은 Windows Terminal처럼 프로그램이 보낸 제목(OSC 0·2)이다. 첫 제목은 sill-host가 준 셸 이름이고(M7),
   // 프로그램이 제목을 지우면 셸 이름으로 돌아간다. cmd는 첫 제목부터 "cmd - prompt …"처럼 실행 중인 명령을 붙이므로 뗀다.
@@ -142,7 +169,7 @@ function create(id) {
     }
     host.postMessage('i' + id + ' ' + d);
   });
-  term.onResize(() => sendSize(t));
+  term.onResize(() => { if (!t.replaying) sendSize(t); });
 
   // 프롬프트마다(OSC 133;A) 표식을 남겨 Ctrl+Up/Down이 이전·다음 명령으로 스크롤하게 한다. 출력은 그대로 xterm.js가 처리한다.
   // 셸은 줄을 다시 그릴 때도 133;A를 낼 수 있으므로(긴 입력이 줄바꿈될 때), Enter나 Ctrl+C 뒤의 첫 133;A에만 표식을 남긴다.
@@ -229,7 +256,9 @@ host.addEventListener('message', e => {
   else if (m[0] === 'a') activate(id, false);
   else if (m[0] === '-') remove(id);    // 셸이 코드 0으로 끝나 band가 닫았다
   else if (!t) return;
+  else if (m[0] === 'b') t.tab.classList.add('bell');
   else if (m[0] === 'o') t.term.write(m.slice(space + 1));
+  else if (m[0] === 'z') replay(t, m.slice(space + 1));
   else if (m[0] === 'x' && !t.ended) {
     t.ended = true;
     // 셸이 끝났으면 sill-host가 종료 줄을 먼저 보냈다(M6). sill-host가 그냥 끊겼으면 줄 중간일 수 있다.

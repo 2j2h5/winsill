@@ -1,0 +1,6 @@
+{
+  "name": "sill",
+  "version": "0.2.0",
+  "description": "Rings the terminal bell in Sill when Claude Code finishes, asks for permission, or stops on an error. Does nothing in other terminals.",
+  "homepage": "https://github.com/2j2h5/winsill"
+}

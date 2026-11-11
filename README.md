@@ -18,6 +18,8 @@ Sill extends File Explorer itself. It is not a replacement file manager. The pan
 - **Terminal inside File Explorer:** a panel at the bottom of every File Explorer window. `` Ctrl+` `` opens and closes it, like the terminal in VS Code.
 - **Two-way folder sync:** File Explorer and the shell stay in the same folder. Sill never types into a running program such as Claude Code or `vim`.
 - **Terminal tabs:** several terminals per window, with VS Code keys (`` Ctrl+Shift+` ``, `Ctrl+PageUp`/`Ctrl+PageDown`).
+- **Tab tear-off:** drag a File Explorer tab out into its own window, or into another window, and its terminals keep running and move with it.
+- **Alerts:** when a terminal you aren't looking at rings the bell, for example when Claude Code or Codex finishes, its tab shows a dot, the taskbar button flashes, and a closed panel opens.
 - **Your shell:** PowerShell 7, Windows PowerShell, cmd, Git Bash, or any command line.
 - **"Open in Sill"** on the right-click menu of a folder background.
 - **Light and dark themes** that follow Windows.
@@ -66,6 +68,38 @@ Sill handles these keys itself and doesn't send them to the shell (except `^C`).
 - Close a tab with its **×** or a middle click. Closing the last tab closes the panel.
 - `exit` closes the tab. If the shell ends with a non-zero exit code, the tab stays open and shows the code. Press any key to restart it.
 - The tab title is the title the running program sets, or the shell name.
+- Drag a File Explorer tab out into a new window, back again, or into another window's tab bar: the panel moves with it, with the same shells and their output. Closing a File Explorer tab or window ends its terminals.
+
+### Alerts
+
+When a terminal you aren't looking at rings the bell (BEL) or asks for a desktop notification (OSC 9, OSC 777 or OSC 99), Sill lets you know:
+
+- A small dot, in the color the taskbar uses when it flashes, appears to the right of that terminal's name on its tab. It goes away when you click into the terminal.
+- If the File Explorer window isn't in the foreground, its taskbar button flashes.
+- If the panel is closed, it opens and shows that terminal, without taking the keyboard focus.
+
+Sill alerts you once until you look at the terminal. A bell in the terminal you are typing in does nothing, and Sill never plays a sound. An alert from another tab of the same File Explorer window shows as the dot when you switch back to that tab. When the panel opens for an alert, folder sync follows that terminal, and the file list gets shorter, so the item under the mouse can move. A program that keeps ringing the bell opens the panel again each time you close it. To keep the panel closed, set `"alertOpensPanel": false` in settings.json.
+
+Windows can turn taskbar flashing off: Settings > Personalization > Taskbar > Taskbar behaviors > Show flashing on taskbar apps.
+
+### AI coding agents
+
+Any program that rings the bell or sends one of these notification sequences triggers an alert. Most AI coding agents don't do that on their own, so Sill can set them up for you: check **Receive alerts from AI coding agents** when you install Sill, or run this once later (for example after you install a new agent):
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Sill\bin\sill-host.exe" agents
+```
+
+It sets up the agents it finds and shows what it did. Everything it adds rings the bell only inside Sill (it checks `TERM_PROGRAM=Sill`) and does nothing in other terminals. `sill-host.exe agents remove` takes it all out again, and uninstalling Sill does too.
+
+| Agent | What Sill sets up | Alerts when |
+|---|---|---|
+| Claude Code | The Sill plugin, installed with `claude plugin install` | Claude finishes, asks for permission, or stops on an error, also in a background session you open from Sill. Tested with 2.1.322 |
+| Codex | Nothing. Codex notifies by default when its terminal isn't focused (`[tui] notifications`) | Codex finishes or asks for approval. Tested with 0.167.1 |
+| GitHub Copilot CLI | A hook file, `%USERPROFILE%\.copilot\hooks\sill.json` | The agent finishes a turn or shows a notification (permission prompt and others). Not tested yet |
+| opencode | A plugin file, `~\.config\opencode\plugins\sill.js` | The session goes idle or asks for permission. Not tested yet |
+
+For other agents, turn on their notification setting, or add a hook that runs `sill-host.exe bell`, which rings the bell in Sill.
 
 ### Context menu
 
@@ -95,6 +129,8 @@ Right-click an empty area of a folder and choose **Open in Sill**. On Windows 11
 | `gitbash` | Git Bash |
 | anything else | That command line, as is (folder sync needs one of the shells above) |
 
+`"alertOpensPanel": false` keeps a closed panel closed when a terminal alerts you (see [Alerts](#alerts)). The default is `true`.
+
 A change applies to the next terminal you open.
 
 ### Appearance
@@ -123,7 +159,7 @@ The panel follows the Windows app mode (light or dark) under Settings > Personal
 [sill-host.exe keys]  one per sign-in, shortcut keys
 ```
 
-The code inside File Explorer is kept small, because an exception there brings down `explorer.exe`. Shells run in `sill-host.exe`. The shell integration reports the prompt state with OSC 133 and the current folder with OSC 9;9. Sill uses these to decide when it is safe to `cd`. Each terminal gets a random value that only its shell integration knows. Sill ignores these sequences when they don't carry it, so output from a program can't make Sill type `cd` or move File Explorer.
+The code inside File Explorer is kept small, because an exception there brings down `explorer.exe`. Shells run in `sill-host.exe`. The shell integration reports the prompt state with OSC 133 and the current folder with OSC 9;9. Sill uses these to decide when it is safe to `cd`. Each terminal gets a random value that only its shell integration knows. Sill ignores these sequences when they don't carry it, so output from a program can't make Sill type `cd` or move File Explorer. `sill-host.exe` also watches the output for the bell and the desktop-notification sequences, and the panel decides whether you are looking at that terminal.
 
 ## Build from source
 
@@ -133,6 +169,7 @@ You don't need the .NET SDK. The build uses the C# compiler that comes with Wind
 powershell -ExecutionPolicy Bypass -File .\build.ps1             # bin\ (runs the unit tests first; closes File Explorer folder windows that hold the DLL)
 powershell -ExecutionPolicy Bypass -File .\tools\register.ps1    # register bin\ for the current user
 powershell -ExecutionPolicy Bypass -File .\tools\host-check.ps1  # sill-host test without File Explorer
+powershell -ExecutionPolicy Bypass -File .\tools\tearoff-check.ps1  # drags a File Explorer tab with the mouse (hands off while it runs)
 powershell -ExecutionPolicy Bypass -File .\tools\package.ps1     # dist\Sill-Setup-<version>.exe (downloads Inno Setup into deps\)
 powershell -ExecutionPolicy Bypass -File .\tools\unregister.ps1  # remove the registration
 ```

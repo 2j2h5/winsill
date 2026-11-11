@@ -42,6 +42,12 @@ namespace Sill.Band
         int _cookie;
         IntPtr _bar;                        // 서브클래싱한 탐색기의 BaseBar 창
         Label _notice;                      // WebView2를 만들지 못했을 때의 안내
+        bool _startHidden;                  // 패널을 닫아 둔 탭을 떼어 넘겨받음. 첫 ShowDW(true)에서 보이지 않은 채 닫는다(0.1.2)
+        // 알람(0.2.0 M2). 배지가 있는 터미널(보지 않는 동안 이미 알림), 알람으로 열기 전의 초점 창과 초점을 가져가지 않을 때까지의 시각.
+        readonly HashSet<int> _badged = new HashSet<int>();
+        IntPtr _focusBeforeAlert;
+        DateTime _quietUntil;
+        bool Quiet { get { return DateTime.UtcNow < _quietUntil; } }
 
         static void Log(string format, params object[] args) { Shared.Log("band.log", format, args); }
 
@@ -83,7 +89,12 @@ namespace Sill.Band
                 Theme.Read();
                 var view = new View { BackColor = Theme.Content, Visible = false, Text = "Sill" };
                 view.Key += action => Safe("Sill.Key", () => OnKey(action));
-                view.GotFocus += (s, e) => Safe("GotFocus", () => { if (_web != null) _web.MoveFocus(CoreWebView2MoveFocusReason.Programmatic); });
+                view.GotFocus += (s, e) => Safe("GotFocus", () =>
+                {
+                    // 알람으로 연 패널은 초점을 가져가지 않는다. 사용자가 치던 글자가 터미널로 가지 않게 되돌린다(0.2.0 M2).
+                    if (Quiet) { if (_focusBeforeAlert != IntPtr.Zero) Native.SetFocus(_focusBeforeAlert); Log("알람 뒤 초점 되돌림"); return; }
+                    if (_web != null) _web.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
+                });
                 view.Resize += (s, e) => Safe("Resize", () => { if (_web != null) _web.Bounds = view.ClientRectangle; });
                 IntPtr old = Native.SetParent(view.Handle, parent);
                 Log("SetParent 결과 old=0x{0:X} err={1}", old.ToInt64(), Marshal.GetLastWin32Error());
@@ -91,7 +102,7 @@ namespace Sill.Band
 
                 // 세션은 패널 여닫기가 아니라 band 수명(SetSite → CloseDW)에 묶는다(M0). 첫 터미널은 페이지가 뜨는 동안 준비한다.
                 Safe("탐색기 이벤트 연결", () => WatchBrowser(pUnkSite));
-                NewTerminal("시작");
+                if (!TakeHandoff()) NewTerminal("시작");
                 InitWebView(view);
                 return Native.S_OK;
             });
@@ -202,6 +213,7 @@ namespace Sill.Band
                     string rest = space < 0 ? "" : m.Substring(space + 1);
                     Session s;
                     if (m[0] == 'a') _active = id;
+                    else if (m[0] == 'f') _badged.Remove(id);    // 배지가 있던 터미널이 초점을 받아 페이지가 지웠다(0.2.0 M2)
                     else if (m[0] == '-') CloseTerminal(id, "탭 ×");
                     // 셸이 끝난 터미널에서 키를 누르면 같은 번호로 새 sill-host를 띄운다.
                     else if (m[0] == 'n') Restart(id);
@@ -225,9 +237,47 @@ namespace Sill.Band
             if (_web != null) _web.CoreWebView2.PostWebMessageAsString(m);
         }
 
-        Session StartSession(int id)
+        Session StartSession(int id, string attach = null)
         {
-            return new Session(_view, m => ToPage(id, m), Path.Combine(Dir, "sill-host.exe"));
+            return new Session(_view, m => ToPage(id, m), Path.Combine(Dir, "sill-host.exe"), attach);
+        }
+
+        // --- 탭 떼기(0.1.2 M1): 탐색기는 탭을 옮기지 않고 그 폴더로 새 창을 연 뒤 원래 탭을 닫는다 ---
+
+        // 닫기와 떼기를 구별할 수 없으므로 터미널이 있으면 CloseDW마다 남긴다. 새 창에 패널을 열지는 상주 프로세스가 정한다
+        // (원래 창이 남아 있을 때만). 셸이 돌던 sill-host들은 3 s 동안 다시 연결을 기다린다.
+        void LeaveHandoff()
+        {
+            if (_terms.Count == 0 || _browser == null) return;
+            var lines = new List<string> { Convert.ToInt64(Get(_browser, "HWND")).ToString(), Folder() ?? "", _view != null && _view.Visible ? "1" : "0", "0" };
+            foreach (var pair in _terms)
+            {
+                if (pair.Key == _active) lines[3] = (lines.Count - 4).ToString();
+                lines.Add(pair.Value.Name);
+            }
+            File.WriteAllLines(Shared.HandoffPath, lines);
+            Log("넘김 기록 {0}개 패널={1}", _terms.Count, lines[2]);
+        }
+
+        // 상주 프로세스가 이 창에 패널을 열기 직전에 이름을 바꾼 기록이면 그 sill-host들에 붙는다. 사용자가 직접 연 패널은 기록을 가져가지 않는다.
+        // 붙은 터미널에는 탐색기 폴더(c)를 보내지 않는다. 셸이 바빠 건너뛴 이동을 나중에 맞추게 된다.
+        bool TakeHandoff()
+        {
+            var f = new FileInfo(Shared.HandoffOpenPath);
+            if (!f.Exists) return false;
+            string[] rec = File.ReadAllLines(f.FullName);
+            File.Delete(f.FullName);
+            if (DateTime.UtcNow - f.LastWriteTimeUtc > TimeSpan.FromSeconds(3) || rec.Length < 5) { Log("넘김 기록 버림(낡음)"); return false; }
+            _startHidden = rec[2] == "0";
+            int active = int.Parse(rec[3]);
+            for (int i = 4; i < rec.Length; i++)
+            {
+                int id = ++_lastId;
+                _terms[id] = StartSession(id, rec[i]);
+                if (i - 4 == active) _active = id;
+            }
+            Log("넘겨받음 {0}개 활성={1} 패널={2}", _terms.Count, _active, rec[2]);
+            return true;
         }
 
         // 새 터미널은 탐색기의 지금 폴더에서 시작하고 활성이 된다. 페이지가 아직 없으면 뜬 뒤 l로 받는다.
@@ -247,19 +297,21 @@ namespace Sill.Band
             Session s;
             if (!_terms.TryGetValue(id, out s)) return;
             s.Dispose();
+            _badged.Remove(id);
             _terms[id] = StartSession(id);
             Log("터미널 {0} 다시 시작", id);
             SendFolder(id, "다시 시작");
         }
 
-        // 탭 ×, 또는 셸이 코드 0으로 끝남(M9). 파이프를 닫으면 sill-host가 끝나고 작업 개체가 셸을 끝낸다.
+        // 탭 ×, 또는 셸이 코드 0으로 끝남(M9). q를 받은 sill-host가 바로 끝나고 작업 개체가 셸을 끝낸다(0.1.2).
         // 마지막 터미널이면 패널을 닫는다. 다시 열면(ShowDW) 새 터미널을 만든다.
         void CloseTerminal(int id, string why)
         {
             Session s;
             if (!_terms.TryGetValue(id, out s)) return;
-            s.Dispose();
+            s.Quit();
             _terms.Remove(id);
+            _badged.Remove(id);
             Log("터미널 {0} 닫음({1}), {2}개", id, why, _terms.Count);
             if (_terms.Count == 0) ShowPanel(false);
         }
@@ -269,6 +321,7 @@ namespace Sill.Band
         {
             foreach (int id in _terms.Keys) Post("+" + id);
             Post("a" + _active);
+            foreach (int id in _badged) Post("b" + id);    // WebView2를 다시 만든 페이지에도 배지를 되살린다(0.2.0 M2)
         }
 
         void ToPage(int id, string m)
@@ -286,7 +339,54 @@ namespace Sill.Band
                 Log("터미널 {0} 셸 끝남 code={1}", id, m.Substring(1));
                 if (m == "e0") { CloseTerminal(id, "exit"); Post("-" + id); }
             }
+            else if (m[0] == 'b') Safe("알람", () => Alert(id, m != "b-"));
             else Post(m.Insert(1, id + " "));     // 출력은 클 수 있으므로 복사를 한 번만 한다
+        }
+
+        // --- 알람(0.2.0 M2): sill-host가 찾은 벨·알림 OSC를 사용자가 보고 있지 않을 때만 보인다(설계 표 5) ---
+
+        // 보고 있음 = 창이 전경, 패널이 보임, 이 탭이 활성, 이 터미널이 활성 Sill 탭이고 패널에 초점. 그러면 아무것도 하지 않는다.
+        // 보지 않는 동안에는 한 번만 알린다(Windows Terminal과 같음). 배지가 이미 있으면 반짝임과 패널 열기를 되풀이하지 않는다.
+        // 작업 표시줄은 창에 초점이 없을 때만 반짝인다(관습). 닫힌 패널은 연다(mayOpen: settings.json의 alertOpensPanel).
+        // 사용자가 닫은 뒤에도 다음 알람에 다시 연다(개발자 결정, M2 결과 검토). 벨을 계속 내는 프로그램이면 alertOpensPanel로 끈다.
+        void Alert(int id, bool mayOpen)
+        {
+            const uint GA_ROOT = 2;
+            if (_view == null || !_terms.ContainsKey(id)) return;
+            IntPtr root = Native.GetAncestor(_view.Handle, GA_ROOT);
+            bool front = Native.GetForegroundWindow() == root;
+            IntPtr tab = Native.FindWindowEx(root, IntPtr.Zero, "ShellTabWindowClass", null);   // 활성 탭은 z-순서 맨 위(M6)
+            bool tabActive = tab != IntPtr.Zero && Native.IsChild(tab, _view.Handle);
+            bool shown = _view.Visible;
+            if (front && shown && tabActive && id == _active && PanelFocused()) return;
+            if (!_badged.Add(id)) return;
+            Post("b" + id);
+            bool open = tabActive && !shown && mayOpen;
+            int flashes = front ? 0 : Flash(root);
+            if (open) OpenForAlert(id);
+            Log("알람 {0} 배지=새 패널={1} 반짝임={2}", id, open ? "열기" : (shown ? "보임" : "그대로"), flashes == 0 ? "없음" : flashes + "번");
+        }
+
+        // Windows가 전경 전환을 막을 때 반짝이는 횟수(ForegroundFlashCount, 기본 7)만큼 반짝인다. 끝나면 단추는 강조된 채 남는다.
+        static int Flash(IntPtr root)
+        {
+            const uint SPI_GETFOREGROUNDFLASHCOUNT = 0x2004, FLASHW_TRAY = 2;
+            uint count;
+            if (!Native.SystemParametersInfo(SPI_GETFOREGROUNDFLASHCOUNT, 0, out count, 0)) count = 7;
+            var info = new FLASHWINFO { cbSize = (uint)Marshal.SizeOf(typeof(FLASHWINFO)), hwnd = root, dwFlags = FLASHW_TRAY, uCount = count };
+            Native.FlashWindowEx(ref info);
+            return (int)count;
+        }
+
+        // Ctrl+`와 같은 길로 열되 초점은 옮기지 않는다. 사용자가 치던 글자(파일 이름 바꾸기 등)가 터미널로 가지 않게 한다.
+        // 알람이 온 터미널을 보이므로 폴더 동기화 상대도 그 터미널이 된다(사용자가 탭을 누른 것과 같다).
+        void OpenForAlert(int id)
+        {
+            _active = id;
+            Post("a" + id);
+            _focusBeforeAlert = Native.GetFocus();
+            _quietUntil = DateTime.UtcNow.AddSeconds(1);
+            ShowPanel(true);
         }
 
         // --- 단축키와 오른쪽 클릭 메뉴(M6): 상주 프로세스가 활성 탭의 band 창에 보낸다 ---
@@ -296,6 +396,7 @@ namespace Sill.Band
         void OnKey(int action)
         {
             const int KeyToggle = 0, KeyNew = 1;
+            _quietUntil = DateTime.MinValue;    // 사용자가 키로 부르면 알람으로 연 직후라도 초점을 준다
             bool shown = _view.Visible, focused = shown && PanelFocused();
             Log("Sill.Key {0} 보임={1} 포커스={2}", action, shown, focused);
             if (action == KeyNew) NewTerminal("새 터미널 키");
@@ -453,21 +554,25 @@ namespace Sill.Band
         {
             Session session;
             if (_browser == null || !_terms.TryGetValue(id, out session)) return;
-            // 표 1: Document.Folder.Self.Path는 파일 시스템 경로를 그대로, 가상 폴더는 ::{GUID}로 준다.
-            // 얻은 COM 개체는 바로 놓는다. 두면 탐색할 때마다 지난 폴더의 보기가 GC 때까지 남는다(M10).
+            string path = Folder();
+            Log("{0} 폴더 {1}", why, path);
+            if (string.IsNullOrEmpty(path) || path.StartsWith("::")) return;
+            session.Send("c" + path);
+        }
+
+        // 표 1: Document.Folder.Self.Path는 파일 시스템 경로를 그대로, 가상 폴더는 ::{GUID}로 준다.
+        // 얻은 COM 개체는 바로 놓는다. 두면 탐색할 때마다 지난 폴더의 보기가 GC 때까지 남는다(M10).
+        string Folder()
+        {
             object doc = null, folder = null, self = null;
-            string path;
             try
             {
                 doc = Get(_browser, "Document");
                 folder = Get(doc, "Folder");
                 self = Get(folder, "Self");
-                path = Get(self, "Path") as string;
+                return Get(self, "Path") as string;
             }
             finally { Release(self); Release(folder); Release(doc); }
-            Log("{0} 폴더 {1}", why, path);
-            if (string.IsNullOrEmpty(path) || path.StartsWith("::")) return;
-            session.Send("c" + path);
         }
 
         static object Get(object o, string name)
@@ -508,6 +613,9 @@ namespace Sill.Band
             return Guard("ShowDW", () =>
             {
                 Log("ShowDW({0})", fShow);
+                if (!fShow) _startHidden = false;
+                // 패널을 닫아 둔 탭을 떼었다. 셸을 받으려고 상주 프로세스가 패널을 열었으므로 보이지 않은 채 바로 닫는다(0.1.2).
+                if (_view != null && fShow && _startHidden) { Log("닫혀 있던 패널"); ShowPanel(false); return Native.S_OK; }
                 // 탐색기는 패널을 닫았다 열 때마다 사이트 스타일을 되돌리므로 보일 때마다 다시 적용한다. 그 전의 배치에는 띠 머리가 있다.
                 if (_view != null && !fShow) _view.CaptionOff = false;
                 if (_view != null && fShow) Safe("탐색기 모양", Restyle);
@@ -532,6 +640,7 @@ namespace Sill.Band
             return Guard("CloseDW", () =>
             {
                 Log("CloseDW");
+                Safe("넘김 기록", LeaveHandoff);
                 DestroyView();
                 return Native.S_OK;
             });
@@ -566,7 +675,8 @@ namespace Sill.Band
         public int UIActivateIO(bool fActivate, ref MSG pMsg)
         {
             Log("UIActivateIO({0})", fActivate);
-            if (fActivate && _view != null) _view.Focus();
+            // 알람으로 연 패널(Quiet)은 초점을 가져가지 않는다(0.2.0 M2).
+            if (fActivate && _view != null && !_startHidden && !Quiet) _view.Focus();
             return Native.S_OK;
         }
 
@@ -593,6 +703,7 @@ namespace Sill.Band
             _browser = null;
             foreach (var s in _terms.Values) s.Dispose();
             _terms.Clear();
+            _badged.Clear();
             // 닫는 동안 band 창이 포커스를 받으면(GotFocus) 닫힌 컨트롤러를 부르지 않도록 먼저 비운다.
             if (_web != null) { var web = _web; _web = null; web.Close(); }
             if (_bar != IntPtr.Zero) { Native.RemoveWindowSubclass(_bar, BarProc, UIntPtr.Zero); _bar = IntPtr.Zero; }

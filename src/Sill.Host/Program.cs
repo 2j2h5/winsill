@@ -16,9 +16,13 @@ namespace Sill.Host
 {
     // band 하나에 붙는 셸 세션(M1). band가 준 이름으로 파이프 서버를 열고, 첫 r 메시지에서 ConPTY로 셸을 시작한다.
     // 자기 자신을 KILL_ON_JOB_CLOSE 작업 개체에 넣으므로, 이 프로세스가 어떻게 끝나든 셸과 그 자식이 함께 종료된다.
+    // 셸이 돌 때 파이프가 끊기면 3 s 동안 같은 이름으로 다시 연결을 기다린다. 탐색기는 탭을 떼면 그 탭을 닫고 새 창을 연다(0.1.2 M1).
     static class Program
     {
         static void Log(string format, params object[] args) { Shared.Log("host.log", format, args); }
+
+        // 끊긴 뒤 다시 연결을 기다리는 시간. 떼낸 탭의 새 창은 놓은 뒤 약 0.7 s에 ShellWindows에 보였다(0.1.2 프로포절).
+        const int Grace = 3000;
 
         // 셸 통합이 Sill의 cd 경로를 읽는 파일. 키 처리기를 등록한 셸 통합이 만든다(M6).
         static readonly string KeyFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -26,11 +30,14 @@ namespace Sill.Host
 
         static int Main(string[] args)
         {
-            // keys: 단축키 상주 프로세스, open: 오른쪽 클릭 메뉴(M6). 그 밖에는 band가 준 파이프 이름이다.
+            // keys: 단축키 상주 프로세스, open: 오른쪽 클릭 메뉴(M6). agents, hook, bell: 에이전트 CLI 알람(0.2.0 M2). 그 밖에는 band가 준 파이프 이름이다.
             // 인수가 없으면(bin에서 더블클릭) 할 일이 없다(M8).
             if (args.Length == 0) return 0;
-            if (args[0] == "keys") return Keys.Run();
+            if (args[0] == "keys") return Keys.Run(args.Length > 1 && args[1] == "moved");
             if (args[0] == "open") return Keys.Open(args.Length > 1 ? args[1] : "");
+            if (args[0] == "hook") return Agents.Hook();
+            if (args[0] == "bell") return Agents.Bell();
+            if (args[0] == "agents") return Agents.Run(Array.IndexOf(args, "remove") > 0, Array.IndexOf(args, "quiet") > 0);
             try { Run(args[0], args.Length > 1 ? args[1] : null); }
             catch (Exception e) { Log("예외: {0}", e); }
             Exit();
@@ -69,6 +76,9 @@ namespace Sill.Host
             DeleteStaleKeyFiles();
             File.Delete(KeyFile);
             Environment.SetEnvironmentVariable("SILL_CD", KeyFile);   // 셸이 물려받는다
+            // 프로그램이 어느 터미널 안인지 알아보는 관습적인 변수(VS Code는 vscode). Sill 플러그인의 훅이 본다(0.2.0 M2).
+            Environment.SetEnvironmentVariable("TERM_PROGRAM", "Sill");
+            Environment.SetEnvironmentVariable("TERM_PROGRAM_VERSION", Shared.Version);
             // 셸 통합만 아는 난수. 셸 통합이 읽고 바로 지우므로 셸이 띄우는 프로그램은 모른다. Sync가 이것으로 진짜 프롬프트를 가린다.
             var nonce = new byte[16];
             using (var rng = new System.Security.Cryptography.RNGCryptoServiceProvider()) rng.GetBytes(nonce);
@@ -90,10 +100,16 @@ namespace Sill.Host
                 short cols = 0, rows = 0;
                 var sync = new Sync(nonceHex);
                 // 출력 보내기 스레드: 16 ms에 한 번까지. 쉬는 동안 온 출력은 다음 메시지에 함께 간다(M8).
+                // 끊긴 파이프에 쓰다 난 예외로 끝나지 않는다. 다시 붙으면 보관한 출력을 다시 튼다(0.1.2).
                 new Thread(() =>
                 {
-                    try { while (true) { OutReady.WaitOne(); Flush(pipe); Thread.Sleep(16); } }
-                    catch (Exception e) { Log("보내기 중단: {0}", e.Message); }
+                    while (true)
+                    {
+                        OutReady.WaitOne();
+                        try { Flush(pipe); }
+                        catch (Exception e) { Log("보내기 실패: {0}", e.Message); }
+                        Thread.Sleep(16);
+                    }
                 }) { IsBackground = true }.Start();
                 // 셸이 시작된 뒤의 c는 작업 스레드가 받은 순서대로 처리한다. 끊긴 네트워크 경로의 폴더 확인(약 21 s)이 입력을 막지 않게 한다(M8).
                 var folders = new BlockingCollection<string>();
@@ -104,75 +120,119 @@ namespace Sill.Host
                         catch (Exception e) { Log("c 처리 예외: {0}", e.Message); }
                 }) { IsBackground = true }.Start();
                 string m;
-                while ((m = Shared.Read(pipe)) != null)
+                while (true)
                 {
-                    if (m.Length == 0) continue;
-                    if (m[0] == 'i' && pty != null) { sync.Input(m.Substring(1)); pty.Write(m.Substring(1)); }
-                    else if (m[0] == 'c' && pty == null) sync.StartDir = m.Substring(1);   // 확인은 셸을 띄울 때 한 번
-                    else if (m[0] == 'c') folders.Add(m.Substring(1));
-                    else if (m[0] == 's') OpenSettings(pipe);
-                    else if (m[0] == 'r')
+                    while ((m = Read(pipe)) != null)
                     {
-                        var size = m.Substring(1).Split(',');
-                        short c = short.Parse(size[0]), r = short.Parse(size[1]);
-                        if (pty != null)
+                        if (m.Length == 0) continue;
+                        if (m[0] == 'i' && pty != null) { sync.Input(m.Substring(1)); pty.Write(m.Substring(1)); }
+                        else if (m[0] == 'c' && pty == null) sync.StartDir = m.Substring(1);   // 확인은 셸을 띄울 때 한 번
+                        else if (m[0] == 'c') folders.Add(m.Substring(1));
+                        else if (m[0] == 's') OpenSettings(pipe);
+                        // 사용자가 터미널을 닫았다(탭 ×, exit). 다시 연결을 기다리지 않는다(0.1.2).
+                        else if (m[0] == 'q') { Log("q 받음"); return; }
+                        else if (m[0] == 'r')
                         {
-                            // 같은 크기는 새 페이지(WebView2 복구)뿐이다. ConPTY는 크기가 바뀌면 화면을 다시 보내므로 한 칸 바꿨다 되돌린다(M6).
-                            // 화면과 달리 창 제목은 다시 오지 않으므로 마지막 제목을 먼저 보낸다(M7).
-                            if (c == cols && r == rows)
+                            var size = m.Substring(1).Split(',');
+                            short c = short.Parse(size[0]), r = short.Parse(size[1]);
+                            if (pty != null)
                             {
-                                Log("다시 그리기");
-                                if (sync.Title != null) Out("\x1b]0;" + sync.Title + "\x07");
-                                pty.Resize((short)(c - 1), r);
+                                // 새 페이지에는 빈 xterm.js가 있다. 다시 붙은 뒤의 첫 r(탭 떼기, 0.1.2)과 같은 크기 r(WebView2 복구, M6)이 그렇다.
+                                // 보관한 출력을 다시 틀고, 다시 오지 않는 제목(M7)과 모드를 보낸 뒤, ConPTY가 지금 화면을 다시 그리게 한다.
+                                // ConPTY는 크기가 바뀌면 화면을 다시 보내므로 같은 크기면 한 칸 바꿨다 되돌린다(M6).
+                                bool same = c == cols && r == rows;
+                                if (same || _detached) Replay(pipe, sync, c, r);
+                                else lock (Pending) Saved.Size(c + "," + r);
+                                if (same) pty.Resize((short)(c - 1), r);
+                                pty.Resize(c, r);
+                                cols = c; rows = r;
+                                continue;
                             }
-                            pty.Resize(c, r);
                             cols = c; rows = r;
-                            continue;
-                        }
-                        cols = c; rows = r;
+                            lock (Pending) Saved.Size(c + "," + r);
 
-                        // 설정 문제는 셸 출력보다 먼저 패널에 한 줄로 알린다. 셸을 띄우지 못하면 끝내고, band가 다시 시작을 안내한다.
-                        Action<string> notice = s => { Log("안내: {0}", s); Out("\x1b[90m[Sill] " + s + "\x1b[0m\r\n"); };
-                        shell = Shell.Choose(shellArg, notice);
-                        if (shell == null) { Flush(pipe); pipe.WaitForPipeDrain(); return; }   // 안내 줄을 band가 읽은 뒤에 닫는다
-                        // zip 안처럼 탐색기에서만 열리는 폴더, 그 셸이 갈 수 없는 폴더(cmd의 UNC), 답이 없는 네트워크 폴더면 홈에서 시작한다.
-                        string dir = sync.StartDir;
-                        if (!DirectoryExists(dir, 2000) || (shell.Cd != null && shell.Cd(dir) == null))
-                        {
-                            Log("시작 폴더 아님 {0}", dir);
-                            dir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                        }
-                        try { pty = Pty.Start(shell.CommandLine, shell.Title, cols, rows, dir); }
-                        catch (Win32Exception e) { notice("Cannot start the shell: " + shell.Name + " (" + e.Message + ")"); Flush(pipe); pipe.WaitForPipeDrain(); return; }
-                        Log("셸 시작 {0} pid={1} {2}x{3} {4}", shell.Name, pty.Process.Id, cols, rows, dir);
-                        // ConPTY는 셸이 첫 화면을 그릴 때에야 시작 제목을 보낸다(powershell 1.9 s). 그동안 탭이 비지 않게 먼저 보낸다(M10).
-                        sync.Title = shell.Title;
-                        Out("\x1b]0;" + shell.Title + "\x07");
-                        sync.Started(pty.Write, shell.Cd, KeyFile);
-                        var started = pty;
-                        new Thread(() => Pump(started, pipe, sync)) { IsBackground = true }.Start();
-                        new Thread(() =>
-                        {
-                            started.Process.WaitForExit();
-                            int code = started.TakeExitCode();
-                            Log("셸 끝남 code={0}", code);
-                            // Windows Terminal의 종료 줄 모양(M6). 셸의 마지막 출력이 먼저 가도록 잠깐 기다린다.
-                            Thread.Sleep(100);
-                            try
+                            // 설정 문제는 셸 출력보다 먼저 패널에 한 줄로 알린다. 셸을 띄우지 못하면 끝내고, band가 다시 시작을 안내한다.
+                            Action<string> notice = s => { Log("안내: {0}", s); Out("\x1b[90m[Sill] " + s + "\x1b[0m\r\n"); };
+                            shell = Shell.Choose(shellArg, notice);
+                            if (shell == null) { Flush(pipe); pipe.WaitForPipeDrain(); return; }   // 안내 줄을 band가 읽은 뒤에 닫는다
+                            // zip 안처럼 탐색기에서만 열리는 폴더, 그 셸이 갈 수 없는 폴더(cmd의 UNC), 답이 없는 네트워크 폴더면 홈에서 시작한다.
+                            string dir = sync.StartDir;
+                            if (!DirectoryExists(dir, 2000) || (shell.Cd != null && shell.Cd(dir) == null))
                             {
-                                Out(string.Format("\r\n\x1b[90m[process exited with code {0} (0x{0:X8})]\x1b[0m\r\n", code));
-                                Flush(pipe);
-                                // band는 코드가 0이면 그 탭을 닫는다(VS Code와 같음, M9).
-                                Shared.Write(pipe, "e" + code);
-                                pipe.WaitForPipeDrain();
+                                Log("시작 폴더 아님 {0}", dir);
+                                dir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                             }
-                            catch (Exception e) { Log("종료 줄 실패: {0}", e.Message); }
-                            Exit();
-                        }) { IsBackground = true }.Start();
+                            try { pty = Pty.Start(shell.CommandLine, shell.Title, cols, rows, dir); }
+                            catch (Win32Exception e) { notice("Cannot start the shell: " + shell.Name + " (" + e.Message + ")"); Flush(pipe); pipe.WaitForPipeDrain(); return; }
+                            Log("셸 시작 {0} pid={1} {2}x{3} {4}", shell.Name, pty.Process.Id, cols, rows, dir);
+                            // ConPTY는 셸이 첫 화면을 그릴 때에야 시작 제목을 보낸다(powershell 1.9 s). 그동안 탭이 비지 않게 먼저 보낸다(M10).
+                            sync.Title = shell.Title;
+                            Out("\x1b]0;" + shell.Title + "\x07");
+                            sync.Started(pty.Write, shell.Cd, KeyFile);
+                            var started = pty;
+                            new Thread(() => Pump(started, pipe, sync)) { IsBackground = true }.Start();
+                            new Thread(() =>
+                            {
+                                started.Process.WaitForExit();
+                                int code = started.TakeExitCode();
+                                Log("셸 끝남 code={0}", code);
+                                // Windows Terminal의 종료 줄 모양(M6). 셸의 마지막 출력이 먼저 가도록 잠깐 기다린다.
+                                Thread.Sleep(100);
+                                try
+                                {
+                                    Out(string.Format("\r\n\x1b[90m[process exited with code {0} (0x{0:X8})]\x1b[0m\r\n", code));
+                                    Flush(pipe);
+                                    // band는 코드가 0이면 그 탭을 닫는다(VS Code와 같음, M9).
+                                    Shared.Write(pipe, "e" + code);
+                                    pipe.WaitForPipeDrain();
+                                }
+                                catch (Exception e) { Log("종료 줄 실패: {0}", e.Message); }
+                                Exit();
+                            }) { IsBackground = true }.Start();
+                        }
                     }
+                    // 셸이 돌고 있으면 같은 파이프로 다시 연결을 기다린다. 탭을 떼면 새 창의 band가 붙는다(0.1.2).
+                    // 그동안의 셸 출력은 보내지 않고 보관만 한다. 셸을 띄우기 전이면 넘길 것이 없다.
+                    if (pty == null) break;
+                    lock (Pending) { _detached = true; Pending.Clear(); }
+                    Log("파이프 끊김, 다시 연결 기다림");
+                    pipe.Disconnect();
+                    var again = pipe.BeginWaitForConnection(null, null);
+                    if (!again.AsyncWaitHandle.WaitOne(Grace)) { Log("다시 연결 없음"); break; }
+                    pipe.EndWaitForConnection(again);
+                    Log("다시 연결");
                 }
                 Log("파이프 끊김");
             }
+        }
+
+        // 끊긴 파이프는 대개 0바이트 읽기(null)로 오지만, 예외로 오는 경우도 끊김으로 본다.
+        static string Read(PipeStream pipe)
+        {
+            try { return Shared.Read(pipe); }
+            catch (IOException) { return null; }
+        }
+
+        // 새 페이지에 보관한 출력을 옛 크기로 다시 튼다(0.1.2). 잠금 안에서 하므로 그사이 셸 출력이 끼지 않는다.
+        // 보내지 못하고 쌓인 출력은 보관에 이미 있으므로 버린다. 페이지는 z크기마다 터미널 크기를 바꾸고, z(끝)에서 패널 크기로 돌아온다.
+        static void Replay(PipeStream pipe, Sync sync, short cols, short rows)
+        {
+            int n = 0;
+            lock (Pending)
+            {
+                Pending.Clear();
+                _detached = false;
+                try
+                {
+                    foreach (var m in Saved.Replay()) { Shared.Write(pipe, m); n += m.Length; }
+                    Shared.Write(pipe, "z");
+                }
+                catch (Exception e) { Log("다시 틀기 실패: {0}", e.Message); _detached = true; return; }
+                Saved.Size(cols + "," + rows);
+            }
+            Log("다시 틀기 {0}자", n);
+            if (sync.Title != null) Out("\x1b]0;" + sync.Title + "\x07");
+            Out(sync.Modes());
         }
 
         // 끊긴 네트워크 경로의 확인은 20초 넘게 걸린다. 파이프 읽기 스레드에서 부르므로 ms 안에 답이 없으면 없는 것으로 본다.
@@ -186,10 +246,20 @@ namespace Sill.Host
         // 보낼 출력. 출력 조각마다 메시지를 보내면 탐색기의 band가 메시지마다 UI 스레드를 깨운다(대량 출력 중 탐색기 CPU 57 %, M8).
         static readonly StringBuilder Pending = new StringBuilder();
         static readonly AutoResetEvent OutReady = new AutoResetEvent(false);
+        // 보낸 출력과 페이지의 크기, 터미널마다 100만 자(약 2 MB)까지. 페이지의 스크롤백은 xterm.js 기본값 1,000줄이다(0.1.2).
+        static readonly Scrollback Saved = new Scrollback(1000000, 4096);
+        // 파이프가 끊긴 때부터 다시 붙은 뒤 첫 r까지. 출력은 보관만 한다. Pending 잠금 안에서만 바꾼다(0.1.2).
+        static bool _detached;
 
         static void Out(string s)
         {
-            lock (Pending) Pending.Append(s);
+            if (s.Length == 0) return;
+            lock (Pending)
+            {
+                Saved.Add(s);
+                if (_detached) return;
+                Pending.Append(s);
+            }
             OutReady.Set();
         }
 
@@ -212,6 +282,7 @@ namespace Sill.Host
                 var decoder = Encoding.UTF8.GetDecoder();
                 var buf = new byte[65536];
                 var chars = new char[Encoding.UTF8.GetMaxCharCount(buf.Length)];
+                var lastBell = DateTime.MinValue;
                 int n;
                 while ((n = pty.Output.Read(buf, 0, buf.Length)) > 0)
                 {
@@ -220,12 +291,29 @@ namespace Sill.Host
                     var text = new string(chars, 0, c);
                     string moved = sync.Output(text);
                     Out(text);
+                    // 알람(0.2.0 M2). 바이너리 파일을 출력하면 BEL이 수천 개이므로 1 s에 한 번까지만 band를 깨운다.
+                    // 보고 있는지는 band가 정한다. b-는 settings.json의 alertOpensPanel이 false라 닫힌 패널을 열지 않는다는 뜻이다.
+                    if (sync.Rang && DateTime.UtcNow - lastBell >= TimeSpan.FromSeconds(1))
+                    {
+                        lastBell = DateTime.UtcNow;
+                        try
+                        {
+                            Flush(pipe);
+                            Shared.Write(pipe, Shell.AlertOpensPanel ? "b" : "b-");
+                        }
+                        catch (Exception e) { Log("b 못 보냄: {0}", e.Message); }
+                    }
                     if (moved == null) continue;
                     // 없는 경로로 이동하면 탐색기가 오류 창을 띄운다(M2).
                     if (!Directory.Exists(moved)) { Log("p 건너뜀(폴더 아님) {0}", moved); continue; }
-                    Flush(pipe);
-                    Shared.Write(pipe, "p" + moved);
-                    Log("p 보냄 {0}", moved);
+                    // 끊긴 동안이면 버린다. 예외가 이 스레드를 끝내면 셸 출력이 영영 멈춘다(0.1.2).
+                    try
+                    {
+                        Flush(pipe);
+                        Shared.Write(pipe, "p" + moved);
+                        Log("p 보냄 {0}", moved);
+                    }
+                    catch (Exception e) { Log("p 못 보냄 {0}: {1}", moved, e.Message); }
                 }
             }
             catch (Exception e) { Log("출력 중단: {0}", e.Message); }
@@ -415,6 +503,8 @@ namespace Sill.Host
         public static extern bool SetInformationJobObject(IntPtr hJob, int infoClass, IntPtr lpInfo, uint cbInfoLength);
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool QueryInformationJobObject(IntPtr hJob, int infoClass, IntPtr lpInfo, uint cbInfoLength, IntPtr lpReturnLength);
         [DllImport("kernel32.dll")]
         public static extern IntPtr GetCurrentProcess();
     }

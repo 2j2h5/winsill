@@ -41,6 +41,7 @@ Source: "..\bin\sill-host.exe"; DestDir: "{app}\bin"
 Source: "..\bin\Microsoft.Web.WebView2.Core.dll"; DestDir: "{app}\bin"
 Source: "..\bin\WebView2Loader.dll"; DestDir: "{app}\bin"
 Source: "..\bin\web\*"; DestDir: "{app}\bin\web"
+Source: "..\bin\claude-plugin\*"; DestDir: "{app}\bin\claude-plugin"; Flags: recursesubdirs
 Source: "..\LICENSE"; DestDir: "{app}"
 Source: "..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"
 
@@ -67,8 +68,14 @@ Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\Sill"; ValueTyp
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\Sill"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\bin\sill-host.exe"",-32512"
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\Sill\command"; ValueType: string; ValueData: """{app}\bin\sill-host.exe"" open ""%V"""
 
+; 에이전트 CLI 알람(0.2.0 M2). 사용자가 고를 때만 남의 설정을 바꾼다(관습, 기본 꺼짐). winget처럼 조용히 설치하면 돌지 않는다(README의 명령).
+[Tasks]
+Name: "agents"; Description: "Receive alerts from AI coding agents (Claude Code, Codex, GitHub Copilot CLI, opencode)"; Flags: unchecked
+
 [Run]
 Filename: "{app}\bin\sill-host.exe"; Parameters: "keys"; Flags: nowait
+; 깔린 에이전트만 설정한다(Claude Code 플러그인, Copilot CLI 훅 파일, opencode 플러그인). claude 명령마다 10 s 제한. 결과는 host.log
+Filename: "{app}\bin\sill-host.exe"; Parameters: "agents quiet"; Tasks: agents; Flags: runhidden; StatusMsg: "Setting up alerts for AI coding agents..."
 
 [UninstallDelete]
 ; 로그, 설정, WebView2 데이터. 쓰이는 중이라 남으면 RunOnce가 다음 로그인 때 지운다.
@@ -180,9 +187,17 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Cmd: String;
+  Code: Integer;
 begin
-  // 제거 확인 뒤, 파일을 지우기 전. 작업 개체 때문에 셸과 자식도 함께 끝난다.
-  if CurUninstallStep = usUninstall then StopHosts(False);
+  // 제거 확인 뒤, 파일을 지우기 전. 사용자가 sill-host.exe agents로 넣은 Claude Code 플러그인을 먼저 지운다(0.2.0 M2).
+  // 지우지 않으면 Claude Code가 없어진 폴더를 가리킨다. claude 명령마다 10 s 제한이 있고, 실패해도 제거는 계속한다.
+  // 그다음 sill-host를 끝낸다. 작업 개체 때문에 셸과 자식도 함께 끝난다.
+  if CurUninstallStep = usUninstall then
+  begin
+    if not Exec(ExpandConstant('{app}\bin\sill-host.exe'), 'agents remove quiet', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+      Log('agents remove를 돌리지 못함');
+    StopHosts(False);
+  end;
   if CurUninstallStep <> usPostUninstall then Exit;
   Cmd := '';
   if DirExists(ExpandConstant('{app}')) then Cmd := 'rd /s /q "' + ExpandConstant('{app}') + '"';

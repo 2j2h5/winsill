@@ -62,10 +62,20 @@ bind '""\e[24;8~"": ""\e[99~\C-m""'
 : > ""$SILL_CD""
 ";
 
+        // settings.json의 alertOpensPanel(기본 true). 알람이 온 터미널의 닫힌 패널을 열지(0.2.0 M2). 셸을 고를 때 함께 읽는다.
+        public static bool AlertOpensPanel = true;
+
         // value: sill-host의 두 번째 인수. 없으면 settings.json의 shell. 고른 셸을 띄울 수 없으면 null.
         public static Shell Choose(string value, Action<string> notice)
         {
-            if (value == null) value = FromSettings(notice);
+            var settings = ReadSettings(notice);
+            object open;
+            if (settings != null && settings.TryGetValue("alertOpensPanel", out open))
+            {
+                if (open is bool) AlertOpensPanel = (bool)open;
+                else notice("settings.json: \"alertOpensPanel\" must be true or false.");
+            }
+            if (value == null) value = FromSettings(settings, notice);
             string key = (value ?? "").ToLowerInvariant();
             if (key == "") key = OnPath("pwsh.exe") != null ? "pwsh" : "powershell";
             switch (key)
@@ -78,18 +88,25 @@ bind '""\e[24;8~"": ""\e[99~\C-m""'
             }
         }
 
-        static string FromSettings(Action<string> notice)
+        static Dictionary<string, object> ReadSettings(Action<string> notice)
         {
             if (!File.Exists(SettingsPath)) return null;
-            try
-            {
-                var settings = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(SettingsPath));
-                object shell;
-                if (settings == null || !settings.TryGetValue("shell", out shell)) return null;
-                if (shell is string) return (string)shell;
-                notice("settings.json: \"shell\" must be a string. Starting the default shell.");
-            }
-            catch (Exception e) { notice("Cannot read settings.json (" + e.Message + "). Starting the default shell."); }
+            try { return Parse(File.ReadAllText(SettingsPath)); }
+            catch (Exception e) { notice("Cannot read settings.json (" + e.Message + "). Using the defaults."); }
+            return null;
+        }
+
+        // 파서는 따로 둔다. 한 메서드에 있으면 그 메서드를 처음 컴파일할 때 System.Web.Extensions를 적재해, 파일이 없어도
+        // 셸 시작이 늦었다(CI의 첫 셸에서 시작 제목 약 0.4 s, 0.2.0 M2).
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static Dictionary<string, object> Parse(string json) { return new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json); }
+
+        static string FromSettings(Dictionary<string, object> settings, Action<string> notice)
+        {
+            object shell;
+            if (settings == null || !settings.TryGetValue("shell", out shell)) return null;
+            if (shell is string) return (string)shell;
+            notice("settings.json: \"shell\" must be a string. Starting the default shell.");
             return null;
         }
 
@@ -151,7 +168,7 @@ bind '""\e[24;8~"": ""\e[99~\C-m""'
         }
 
         // 네트워크 폴더(UNC, 연결된 드라이브)는 건너뛴다. 끊겨 있으면 폴더 하나에 20초 넘게 걸리고, 셸 시작 전의 파이프 읽기 스레드를 막는다(M8 후속).
-        static string OnPath(string exe)
+        internal static string OnPath(string exe)
         {
             foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
             {

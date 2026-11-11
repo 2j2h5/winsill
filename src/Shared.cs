@@ -15,11 +15,12 @@ namespace Sill
     // band와 sill-host가 함께 쓰는 코드. 파이프는 메시지 모드라서 Write 한 번이 메시지 하나로 도착한다.
     // 메시지는 UTF-8 문자열이고 첫 글자가 종류다: r(크기) i(입력) o(출력) c(탐색기 폴더) p(셸 폴더). M1·M2·M3.
     // sill-host → band: e(셸의 종료 코드, 0이면 band가 탭을 닫음). M9.
+    // band → sill-host: q(사용자가 닫음, 다시 연결을 기다리지 않고 끝남). sill-host → 페이지: z(지난 출력 다시 틀기, z크기 … z). 0.1.2.
     // 페이지와 band 사이에만 오가는 것: s(설정 파일) x(끊김) n(다시 시작) h(패널 닫기) t(앱 모드) l(페이지가 떴다) +(새 터미널) a(활성) -(닫기) u(링크 열기).
     // 페이지와 band 사이에서는 한 터미널의 메시지에 번호가 붙는다(i2 dir). M6, M7, M9.
     static class Shared
     {
-        public const string Version = "0.1.1";
+        public const string Version = "0.2.0";
 
         [ThreadStatic] static byte[] _buf;      // 읽는 스레드마다 하나. 메시지마다 64 KB를 새로 만들지 않는다(M10)
 
@@ -48,6 +49,12 @@ namespace Sill
 
         static readonly string LogDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sill");
         static readonly int Pid = Process.GetCurrentProcess().Id;
+
+        // 탭을 뗄 때의 넘김 기록(0.1.2 M1). 탐색기는 탭을 옮기지 않고 그 폴더로 새 창을 연 뒤 원래 탭을 닫는다.
+        // band가 CloseDW에서 handoff.txt를 쓰고, 상주 프로세스가 새 창에 패널을 열기 직전에 handoff-open.txt로 이름을 바꾸고, 새 band가 SetSite에서 가져간다.
+        // 줄: 탐색기 창(HWND), 폴더, 패널이 보였는지(1/0), 활성 터미널의 순서(0부터), 터미널마다 파이프 이름(탭 순서). 쓴 시각은 파일의 수정 시각이다.
+        public static readonly string HandoffPath = Path.Combine(LogDir, "handoff.txt");
+        public static readonly string HandoffOpenPath = Path.Combine(LogDir, "handoff-open.txt");
         static bool _logDirMade;
 
         // %LOCALAPPDATA%\Sill\<file>에 "시각 [PID] 내용" 한 줄. 여러 프로세스(탐색기 창들, sill-host들)가 같은 파일에 쓴다.

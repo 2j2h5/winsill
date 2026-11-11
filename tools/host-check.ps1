@@ -7,6 +7,8 @@
 # M9: 종료 줄 뒤의 종료 코드(e).
 # M10: 시작 제목, 셸을 띄우는 동안 쓰기가 막히지 않음.
 # 0.1.1: 셸 통합 난수가 셸 환경에 남지 않음, 출력에 섞인 셸 통합 시퀀스로는 cd·p가 일어나지 않음.
+# 0.1.2: 끊긴 뒤 같은 이름으로 다시 붙기와 지난 출력 다시 틀기, 유예 뒤 끝남, q.
+# 0.2.0: 알람(b)은 OSC 밖의 BEL과 알림 OSC에만, 1 s에 한 번까지, 다시 틀기에는 없음. 셸 환경의 TERM_PROGRAM, hook.
 param([ValidateSet('powershell', 'pwsh', 'cmd', 'gitbash')] [string]$Shell = 'powershell')
 $ErrorActionPreference = 'Stop'
 $base = Join-Path $env:TEMP ('sill-check-' + [guid]::NewGuid().ToString('N'))
@@ -17,11 +19,14 @@ $dirB = New-Item -ItemType Directory "$base\it's [x] 한글 `$x #b %PATH%"
 # show: 파일을 화면에 출력하고 2초 기다림(악성 파일을 cat하는 모양). nonce: 셸의 SILL_NONCE를 n=[…]로 출력.
 $cmds = @{
     powershell = @{ ok = "Write-Output ('sill' + '-ok')"; sleep = 'Start-Sleep 2'; flood = '1..20000'; cd = { param($p) "cd -LiteralPath '" + ($p -replace "'", "''") + "'" }
-                    show = { param($f) "Get-Content -LiteralPath '$f'; Start-Sleep 2" }; nonce = 'Write-Output "n=[$env:SILL_NONCE]"' }
+                    show = { param($f) "Get-Content -LiteralPath '$f'; Start-Sleep 2" }; nonce = 'Write-Output "n=[$env:SILL_NONCE]"'; lines = '1..200 | % { "line-$_" }'
+                    tp = 'Write-Output "tp=[$env:TERM_PROGRAM $env:TERM_PROGRAM_VERSION]"' }
     cmd        = @{ ok = 'echo sill-^ok'; sleep = 'ping -n 3 127.0.0.1 >nul'; flood = 'for /l %i in (1,1,20000) do @echo %i'; cd = { param($p) 'cd /d "' + $p.Replace('%', '%""') + '"' }
-                    show = { param($f) "type `"$f`" & ping -n 3 127.0.0.1 >nul" }; nonce = 'echo n=[%SILL_NONCE%]' }
+                    show = { param($f) "type `"$f`" & ping -n 3 127.0.0.1 >nul" }; nonce = 'echo n=[%SILL_NONCE%]'; lines = 'for /l %i in (1,1,200) do @echo line-%i'
+                    tp = 'echo tp=[%TERM_PROGRAM% %TERM_PROGRAM_VERSION%]' }
     gitbash    = @{ ok = "echo sill-''ok"; sleep = 'sleep 2'; flood = 'seq 1 20000'; cd = { param($p) "cd -- '" + $p.Replace("'", "'\''") + "'" }
-                    show = { param($f) "cat '" + $f.Replace('\', '/') + "'; sleep 2" }; nonce = 'echo "n=[$SILL_NONCE]"' }
+                    show = { param($f) "cat '" + $f.Replace('\', '/') + "'; sleep 2" }; nonce = 'echo "n=[$SILL_NONCE]"'; lines = "seq -f 'line-%g' 1 200"
+                    tp = 'echo "tp=[$TERM_PROGRAM $TERM_PROGRAM_VERSION]"' }
 }
 $cmds.pwsh = $cmds.powershell
 $c = $cmds[$Shell]
@@ -39,6 +44,7 @@ $deadPid = 4000000; while (Get-Process -Id $deadPid -ErrorAction SilentlyContinu
 $deadKey = "$sillDir\cd-$deadPid.txt"; $liveKey = "$sillDir\cd-$PID.txt"
 [IO.File]::WriteAllText($deadKey, ''); [IO.File]::WriteAllText($liveKey, '')
 $name = 'sill-check-' + [guid]::NewGuid().ToString('N')
+$hostVersion = (Get-Item "$PSScriptRoot\..\bin\sill-host.exe").VersionInfo.ProductVersion
 $hostProc = Start-Process "$PSScriptRoot\..\bin\sill-host.exe" "$name $Shell" -PassThru
 $pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', $name, 'InOut', 'Asynchronous')
 $pipe.Connect(5000)
@@ -50,6 +56,9 @@ function Send([string]$s) { $b = [Text.Encoding]::UTF8.GetBytes($s); $pipe.Write
 
 # 받은 출력에서 메시지 머리글자 o를 떼고 이어 붙인다(OSC가 메시지 경계에서 나뉠 수 있다). p 메시지는 따로 모은다.
 $script:text = ''; $script:moves = @(); $script:kind = 'o'; $script:atStart = $true; $script:t = $null; $script:omsgs = 0
+# 0.1.2: 새 페이지의 첫 r에 sill-host가 다시 트는 지난 출력(z크기와 o, z로 끝남)도 따로 모은다. 섞으면 뒤 항목의 개수 세기가 틀린다.
+$script:zs = @(); $script:replay = ''; $script:inReplay = $false; $script:zEnd = 0
+$script:bells = 0    # 0.2.0: 받은 b 수
 $buf = New-Object byte[] 65536
 function WaitFor([scriptblock]$cond, [double]$sec = 20) {
     $deadline = (Get-Date).AddSeconds($sec)
@@ -59,7 +68,10 @@ function WaitFor([scriptblock]$cond, [double]$sec = 20) {
         $chunk = [Text.Encoding]::UTF8.GetString($buf, 0, $script:t.Result)
         if ($script:atStart -and $chunk.Length) { $script:kind = $chunk[0]; $chunk = $chunk.Substring(1); if ($script:kind -eq 'o') { $script:omsgs++ } }
         $script:atStart = $pipe.IsMessageComplete
-        if ($script:kind -eq 'p') { $script:moves += $chunk } elseif ($script:kind -eq 'e') { $script:exitCode = $chunk } else { $script:text += $chunk }
+        if ($script:kind -eq 'p') { $script:moves += $chunk } elseif ($script:kind -eq 'e') { $script:exitCode = $chunk }
+        elseif ($script:kind -eq 'b') { if ($script:atStart) { $script:bells++ } }
+        elseif ($script:kind -eq 'z') { if ($chunk) { $script:zs += $chunk; $script:inReplay = $true } else { $script:inReplay = $false; $script:zEnd++ } }
+        elseif ($script:inReplay) { $script:replay += $chunk } else { $script:text += $chunk }
         $script:t = $null
     }
     [bool](& $cond)
@@ -98,6 +110,8 @@ $len = $script:text.Length; Send 'r100,30'
 $results['같은 크기 r → 화면 다시 옴'] = WaitFor { $script:text.IndexOf('sill-ok', $len) -ge 0 } 5
 # M7: 탭 제목(OSC 0)은 ConPTY가 다시 보내지 않으므로 sill-host가 마지막 제목을 보낸다.
 $results['같은 크기 r → 제목 다시 옴'] = $script:text.IndexOf("$([char]27)]0;", $len) -ge 0
+# 0.1.2: 새 페이지에는 지난 출력도 다시 튼다(스크롤백).
+$results['같은 크기 r → 지난 출력 다시 틀기'] = $script:zEnd -eq 1 -and $script:zs[0] -eq '100,30' -and $script:replay -match 'sill-ok'
 
 $results['파이프 ACL 현재 사용자만'] = $aclOk
 
@@ -184,6 +198,26 @@ Send "c$dirA"; WaitPrompt $n
 WaitFor { $false } 1.5 | Out-Null    # 들어간 cd가 있다면 실행될 시간
 $results['출력의 위조 시퀀스 → cd·p 없음'] = (Cwd) -eq $dirB.FullName -and $script:moves.Count -eq $m0 -and (Prompts) -eq $n + 1
 
+# 0.2.0: 알람. 위의 위조 파일과 지금까지의 출력에는 BEL로 끝나는 OSC(제목, 셸 통합)만 있었다.
+$results['BEL로 끝나는 OSC만 있는 출력 → b 없음'] = $script:bells -eq 0
+$bell = "$base\bell.txt"
+[IO.File]::WriteAllText($bell, "ring`a$e]9;hello$e\$e]777;notify;T;B`a$e]9;4;3;0`a`r`n")
+$n = Prompts; Send ("i" + (& $c.show $bell) + "`r"); WaitPrompt $n
+WaitFor { $false } 0.5 | Out-Null
+$results['벨과 알림 OSC → b 한 번(1 s 안)'] = $script:bells -eq 1
+# 새 페이지(같은 크기 r)에 다시 튼 출력에는 위 벨이 있지만 b는 없다.
+$b0 = $script:bells; $z0 = $script:zEnd; Send 'r100,30'
+WaitFor { $script:zEnd -gt $z0 } 5 | Out-Null; WaitFor { $false } 1 | Out-Null
+$results['다시 튼 출력 → b 없음'] = $script:zEnd -gt $z0 -and $script:bells -eq $b0
+$len = $script:text.Length; $n = Prompts; Send "i$($c.tp)`r"; WaitPrompt $n
+$results['셸 환경에 TERM_PROGRAM=Sill'] = $script:text.Substring($len) -match "tp=\[Sill $([regex]::Escape($hostVersion))\]"
+# 0.2.0: 에이전트 훅이 부르는 sill-host.exe bell은 부모의 콘솔에 BEL을 써서 b가 된다(Copilot CLI, opencode).
+$exe = (Resolve-Path "$PSScriptRoot\..\bin\sill-host.exe").Path
+$bellCmd = @{ powershell = "& '$exe' bell"; pwsh = "& '$exe' bell"; cmd = "`"$exe`" bell"; gitbash = "'$($exe -replace '\\', '/')' bell" }[$Shell]
+WaitFor { $false } 1.1 | Out-Null    # 1 s 제한이 지나게
+$b0 = $script:bells; $n = Prompts; Send "i$bellCmd`r"; WaitPrompt $n
+$results['bell → b'] = WaitFor { $script:bells -gt $b0 } 3
+
 # 지금까지는 첫 프롬프트와 Sill이 넣은 cd뿐이므로 p가 없어야 한다.
 $results['첫 프롬프트·Sill의 cd는 p 없음'] = $script:moves.Count -eq 0
 
@@ -235,6 +269,26 @@ $fast = WaitFor { ([regex]::Matches($script:text, 'sill-ok')).Count -gt $ok } 30
 $info['끊긴 경로 뒤 입력'] = '{0:F0} ms' -f $sw.Elapsed.TotalMilliseconds
 $results['끊긴 경로 뒤 입력(2 s 이하)'] = $fast -and $sw.Elapsed.TotalSeconds -le 2
 
+# 0.1.2: 셸이 돌 때 파이프가 끊겨도 sill-host는 같은 이름으로 3 s 동안 다시 연결을 기다린다(탐색기 탭 떼기).
+# 다시 붙은 새 페이지의 첫 r에는 지난 출력(옛 크기의 z와 글), 제목, 모드(ConPTY가 켠 포커스 보고 ?1004h), 지금 화면이 차례로 온다.
+function Get-Children { @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($hostProc.Id)" | ForEach-Object { $_.ProcessId }) }
+function Get-Alive($ids) { @($ids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }) }
+$n = Prompts; Send "i$($c.lines)`r"; WaitPrompt $n
+$kids = Get-Children
+$pipe.Dispose(); $script:t = $null; $script:atStart = $true
+Start-Sleep 1
+$pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', $name, 'InOut', 'Asynchronous')
+$pipe.Connect(2000)
+$pipe.ReadMode = 'Message'
+$len = $script:text.Length; $script:zs = @(); $script:replay = ''; $script:zEnd = 0
+Send 'r90,28'
+$back = WaitFor { $script:zEnd -gt 0 -and $script:text.IndexOf("$([char]27)[?1004h", $len) -ge 0 } 5
+$results['다시 붙기: 같은 셸'] = $back -and -not $hostProc.HasExited -and (Get-Alive $kids).Count -eq $kids.Count
+$results['다시 붙기: 지난 출력(옛 크기)'] = $script:zs.Count -gt 0 -and $script:zs[0] -eq '100,30' -and $script:replay -match 'line-1(?!\d)' -and $script:replay -match 'line-200'
+$results['다시 붙기: 제목'] = $script:text.IndexOf("$([char]27)]0;", $len) -ge 0
+$n = Prompts; Send "i$($c.ok)`r"; WaitPrompt $n
+$results['다시 붙기: 입력'] = $script:text.IndexOf('sill-ok', $len) -ge 0
+
 $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($hostProc.Id)" | ForEach-Object { $_.ProcessId })
 # M6: 셸이 끝나면 Windows Terminal 모양의 종료 줄이 오고 sill-host도 끝난다.
 $len = $script:text.Length; Send "iexit`r"
@@ -263,8 +317,40 @@ $results['셸을 띄우는 동안 쓰기(10 ms 이하)'] = $sw1.Elapsed.TotalMil
 $started = WaitFor { (Prompts) -gt 0 -and (Cwd) } 30
 $info['끊긴 시작 폴더 → 첫 프롬프트'] = '{0:F0} ms' -f $sw.Elapsed.TotalMilliseconds
 $results['끊긴 시작 폴더는 홈에서 곧 시작(5 s 이하)'] = $started -and $sw.Elapsed.TotalSeconds -le 5 -and (Cwd) -eq $env:USERPROFILE
+# 0.1.2: 다시 붙지 않으면 유예(3 s) 뒤 셸까지 끝난다.
+$kids = Get-Children
+$pipe.Dispose(); $sw.Restart()
+$exited = $hostProc.WaitForExit(6000); $sec = $sw.Elapsed.TotalSeconds
+Start-Sleep -Milliseconds 300
+$info['유예 뒤 끝남'] = '{0:F1} s' -f $sec
+$results['유예 뒤 끝남(2.5–4 s, 셸까지)'] = $exited -and $sec -ge 2.5 -and $sec -le 4 -and (Get-Alive $kids).Count -eq 0
+
+# 0.1.2: q(탭 ×, exit)면 다시 연결을 기다리지 않고 바로 끝난다.
+$name = 'sill-check-' + [guid]::NewGuid().ToString('N')
+$hostProc = Start-Process "$PSScriptRoot\..\bin\sill-host.exe" "$name $Shell" -PassThru
+$pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', $name, 'InOut', 'Asynchronous')
+$pipe.Connect(5000)
+$pipe.ReadMode = 'Message'
+$script:text = ''; $script:atStart = $true; $script:t = $null
+Send 'r80,24'
+WaitFor { $script:text.Contains("$([char]27)]0;") } 10 | Out-Null     # 셸을 띄우자마자 시작 제목이 온다
+$kids = Get-Children
+$sw.Restart(); Send 'q'
+$exited = $hostProc.WaitForExit(2000); $sec = $sw.Elapsed.TotalSeconds
+Start-Sleep -Milliseconds 300
+$info['q → 끝남'] = '{0:F2} s' -f $sec
+$results['q → 바로 끝남(1 s 이하, 셸까지)'] = $exited -and $sec -le 1 -and $kids.Count -gt 0 -and (Get-Alive $kids).Count -eq 0
 $pipe.Dispose()
-$hostProc.WaitForExit(5000) | Out-Null
+# 0.2.0: Sill 플러그인의 훅이 부르는 hook은 TERM_PROGRAM이 Sill일 때만 terminalSequence를 쓴다.
+function Invoke-Hook([string]$tp) {
+    $psi = New-Object Diagnostics.ProcessStartInfo("$PSScriptRoot\..\bin\sill-host.exe", 'hook')
+    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true
+    $psi.EnvironmentVariables.Remove('TERM_PROGRAM')
+    if ($tp) { $psi.EnvironmentVariables['TERM_PROGRAM'] = $tp }
+    $p = [Diagnostics.Process]::Start($psi); $o = $p.StandardOutput.ReadToEnd(); $p.WaitForExit(5000) | Out-Null; $o
+}
+$results['hook: Sill 안에서만 terminalSequence'] = (Invoke-Hook 'Sill') -eq '{"terminalSequence":"\u0007"}' -and (Invoke-Hook '') -eq '' -and (Invoke-Hook 'vscode') -eq ''
+
 Remove-Item $base -Recurse -Force
 
 $info.GetEnumerator() | ForEach-Object { "{0}: {1}" -f $_.Key, $_.Value }

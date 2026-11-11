@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace Sill.Band
@@ -22,28 +23,35 @@ namespace Sill.Band
         readonly BlockingCollection<string> _out = new BlockingCollection<string>();
         long _queued;                       // 큐에 있는 글자 수
         readonly string _error;             // sill-host를 띄우지 못한 이유
+        readonly bool _attach;              // 이미 있는 sill-host에 붙음(탭 떼기, 0.1.2)
         volatile bool _closed;
+        public readonly string Name;        // 파이프 이름. 넘김 기록에 쓴다(0.1.2)
 
         static void Log(string format, params object[] args) { Shared.Log("band.log", format, args); }
 
-        public Session(Control ui, Action<string> toPage, string hostPath)
+        // attach: 떼낸 탭의 band가 남긴 파이프 이름. 주면 sill-host를 띄우지 않고, 다시 연결을 기다리는 그 sill-host에 붙는다(0.1.2).
+        public Session(Control ui, Action<string> toPage, string hostPath, string attach = null)
         {
             _ui = ui;
             _toPage = toPage;
-            string name = string.Format("sill-{0}-{1:N}", Process.GetCurrentProcess().Id, Guid.NewGuid());
+            _attach = attach != null;
+            Name = attach ?? string.Format("sill-{0}-{1:N}", Process.GetCurrentProcess().Id, Guid.NewGuid());
             // Asynchronous: 쓰기 스레드의 쓰기가 읽기 스레드의 대기 중인 읽기에 막히지 않게 한다.
-            _pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
+            _pipe = new NamedPipeClientStream(".", Name, PipeDirection.InOut, PipeOptions.Asynchronous);
             // 터미널을 만드는 곳(SetSite, ShowDW, +, 단축키, 다시 시작)이 모두 여기를 지나므로 실패는 여기서 안내로 바꾼다(M2).
-            try
+            if (!_attach)
             {
-                using (var p = Process.Start(new ProcessStartInfo(hostPath, name) { UseShellExecute = false }))
-                    Log("sill-host 실행 pid={0}", p.Id);
-            }
-            catch (Exception e)
-            {
-                _error = e.Message;
-                Log("sill-host 실행 실패: {0}", e.Message);
-                return;
+                try
+                {
+                    using (var p = Process.Start(new ProcessStartInfo(hostPath, Name) { UseShellExecute = false }))
+                        Log("sill-host 실행 pid={0}", p.Id);
+                }
+                catch (Exception e)
+                {
+                    _error = e.Message;
+                    Log("sill-host 실행 실패: {0}", e.Message);
+                    return;
+                }
             }
             new Thread(ReadLoop) { IsBackground = true }.Start();
         }
@@ -52,7 +60,8 @@ namespace Sill.Band
         {
             try
             {
-                _pipe.Connect(10000);
+                // 붙을 sill-host는 이미 기다리고 있다. 없으면(유예가 끝남) 곧 끊김으로 알린다.
+                _pipe.Connect(_attach ? 1000 : 10000);
                 // 연결을 기다리는 동안 닫혔으면(새 터미널 직후 탭 ×, 창 닫기) 여기서 끝낸다. 읽기로 가면 영원히 기다리고 sill-host도 남는다(M10).
                 if (_closed) { _pipe.Dispose(); return; }
                 _pipe.ReadMode = PipeTransmissionMode.Message;
@@ -83,6 +92,7 @@ namespace Sill.Band
                     Interlocked.Add(ref _queued, -m.Length);
                     Shared.Write(_pipe, m);
                 }
+                if (_closed) _pipe.Dispose();       // Quit: q까지 다 쓴 뒤 닫는다
             }
             catch (Exception e)
             {
@@ -123,6 +133,17 @@ namespace Sill.Band
             catch (Exception e) { Log("보내기 예외: {0}", e.Message); }
         }
 
+        // 사용자가 터미널을 닫음(탭 ×, exit). sill-host는 q를 받으면 다시 연결을 기다리지 않고 끝난다(0.1.2).
+        // q는 앞의 입력 뒤에 가고, 쓰기 스레드가 다 쓴 뒤 파이프를 닫는다. sill-host가 멈춰 1 s 안에 못 쓰면 그냥 닫는다(그러면 유예 3 s 뒤 끝남).
+        public void Quit()
+        {
+            Send("q");
+            _closed = true;
+            _out.CompleteAdding();
+            Task.Delay(1000).ContinueWith(t => { try { _pipe.Dispose(); } catch { } });
+        }
+
+        // 탐색기가 탭을 닫음(CloseDW), 다시 시작. 파이프만 닫으므로 셸이 돌던 sill-host는 3 s 동안 다시 연결을 기다린다(0.1.2).
         public void Dispose()
         {
             _closed = true;

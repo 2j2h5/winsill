@@ -132,7 +132,41 @@ namespace Sill.Band
                 Check("5 첫 r에 안내와 x", WaitFor(() => Got.Count == 2, 1000) && Got[0].StartsWith("o") && Got[0].Contains("Cannot start sill-host.exe") && Got[1] == "x");
                 bad.Dispose();
             }
+
+            // 6–8: 다시 연결을 기다리는 sill-host에 붙기와 Quit(탭 떼기, 0.1.2). 시험이 파이프 서버를 직접 연다.
+            // sill-host 경로는 없는 것이라, 띄우려 했다면 연결 대신 안내가 온다.
+            const string missing = @"C:\sill-test-missing\sill-host.exe";
+            string name = "sill-test-" + Guid.NewGuid().ToString("N");
+            using (var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Message, PipeOptions.Asynchronous, 65536, 65536))
+            {
+                Got.Clear();
+                var a = new Session(ui, m => Got.Add(m), missing, name);
+                var wait = server.BeginWaitForConnection(null, null);
+                bool connected = wait.AsyncWaitHandle.WaitOne(2000);
+                if (connected) server.EndWaitForConnection(wait);
+                a.Send("i1");
+                string first = connected ? ReadWithin(server, 2000) : null;
+                if (connected) Shared.Write(server, "o2");
+                Check("6 이름을 준 생성자는 그 서버에 붙음", a.Name == name && first == "i1" && WaitFor(() => Got.Contains("o2"), 1000));
+                a.Send("i3");
+                var sw2 = Stopwatch.StartNew();
+                a.Quit();
+                string m3 = ReadWithin(server, 2000), q = ReadWithin(server, 2000), end = ReadWithin(server, 2000);
+                Check("7 Quit은 앞의 입력, q를 보낸 뒤 닫음 (" + sw2.ElapsedMilliseconds + " ms)", m3 == "i3" && q == "q" && end == null && sw2.ElapsedMilliseconds < 1000);
+            }
+            Got.Clear();
+            var sw3 = Stopwatch.StartNew();
+            var none = new Session(ui, m => Got.Add(m), missing, "sill-test-none-" + Guid.NewGuid().ToString("N"));
+            Check("8 붙을 서버가 없으면 x", WaitFor(() => Got.Contains("x"), 3000) && sw3.ElapsedMilliseconds < 2000);
+            none.Dispose();
             Application.DoEvents();
+        }
+
+        // 서버 쪽 읽기. 끊기면 null, 시간이 지나면 "timeout"(시험이 멈추지 않게).
+        static string ReadWithin(PipeStream pipe, int ms)
+        {
+            var t = System.Threading.Tasks.Task.Run(() => Shared.Read(pipe));
+            return t.Wait(ms) ? t.Result : "timeout";
         }
     }
 }

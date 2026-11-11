@@ -160,6 +160,9 @@ namespace Sill.Band
         public RECT rcCaret;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct FLASHWINFO { public uint cbSize; public IntPtr hwnd; public uint dwFlags, uCount, dwTimeout; }
+
     internal static class Native
     {
         public delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
@@ -182,6 +185,12 @@ namespace Sill.Band
         [DllImport("user32.dll")] public static extern bool InvalidateRect(IntPtr hWnd, IntPtr lpRect, bool bErase);
         [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+
+        // 알람(0.2.0 M2): 탐색기 창이 전경인지, 작업 표시줄 반짝임과 그 횟수(Windows 설정, 기본 7).
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+        [DllImport("user32.dll")] public static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
+        [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint param, out uint value, uint winIni);
 
         // 탐색기 창(BaseBar)의 서브클래스. 다른 확장과 순서가 꼬이지 않도록 comctl32의 방식을 쓴다(M7).
         public delegate IntPtr SubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, UIntPtr uIdSubclass, UIntPtr dwRefData);

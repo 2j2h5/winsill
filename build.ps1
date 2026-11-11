@@ -31,7 +31,7 @@ $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 
 # 단위 시험. 실패하면 탐색기 창을 닫거나 bin을 건드리기 전에 멈춘다.
 $test = Join-Path $env:TEMP 'sill-sync-test.exe'
-& $csc /nologo /codepage:65001 /platform:x64 /out:"$test" "$root\tests\SyncTest.cs" "$root\src\Sill.Host\Sync.cs"
+& $csc /nologo /codepage:65001 /platform:x64 /out:"$test" "$root\tests\SyncTest.cs" "$root\src\Sill.Host\Sync.cs" "$root\src\Sill.Host\Scrollback.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & $test
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -64,12 +64,14 @@ $core ="$wv2\lib\net462\Microsoft.Web.WebView2.Core.dll"
     (Get-ChildItem "$root\src\Sill.Band\*.cs").FullName "$root\src\Shared.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & $csc /nologo /codepage:65001 /target:winexe /platform:x64 /optimize /win32icon:"$root\assets\sill.ico" `
-    /out:"$out\sill-host.exe" /r:System.Web.Extensions.dll `
+    /out:"$out\sill-host.exe" /r:System.Web.Extensions.dll /r:System.Management.dll `
     (Get-ChildItem "$root\src\Sill.Host\*.cs").FullName "$root\src\Shared.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 Copy-Item $core, "$wv2\runtimes\win-x64\native\WebView2Loader.dll" $out
 Copy-Item "$root\web\*", "$xterm\package\lib\xterm.js", "$xterm\package\css\xterm.css", "$fit\package\lib\addon-fit.js" "$out\web"
+# Claude Code용 Sill 플러그인(0.2.0 M2). sill-host.exe agents가 이것을 %LOCALAPPDATA%\Sill로 복사해 설치한다.
+Copy-Item -Recurse -Force "$root\claude-plugin" $out
 
 # 단축키 상주 프로세스(sill-host keys)도 위에서 함께 끝냈으므로, 등록되어 있으면 새 exe로 다시 띄운다.
 if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sill -ErrorAction SilentlyContinue) { Start-Process "$out\sill-host.exe" keys }

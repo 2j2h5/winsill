@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/../../sill-host.exe", "args": ["hook"] }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/../../sill-host.exe", "args": ["hook"] }] }],
+    "StopFailure": [{ "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/../../sill-host.exe", "args": ["hook"] }] }],
+    "Notification": [
+      { "matcher": "agent_completed", "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/../../sill-host.exe", "args": ["hook"] }] },
+      { "matcher": "agent_needs_input", "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/../../sill-host.exe", "args": ["hook"] }] }
+    ]
+  }
+}

@@ -37,7 +37,15 @@ namespace Sill.Host
         readonly Queue<Tuple<string, DateTime>> _echo = new Queue<Tuple<string, DateTime>>();
         static readonly TimeSpan EchoLife = TimeSpan.FromSeconds(2);
         StringBuilder _osc;     // ESC ] 뒤를 모으는 중
+        bool _oscLong;          // 모으던 OSC가 4096자를 넘음. 끝 문자까지 OSC 안으로 두고 내용은 버린다(0.2.0)
+        StringBuilder _csi;     // ESC [ 뒤를 모으는 중(모드)
         bool _esc;
+        // 이번 Output에 알람(OSC 밖의 BEL, 알림 OSC)이 있었다. 부르는 쪽(Pump)이 Output 바로 뒤에 읽는다(0.2.0 M2).
+        public bool Rang;
+        // 새 페이지(탭을 떼어 다시 붙음, WebView2 복구)에 다시 보내는 모드와 그 순서. ConPTY는 다시 그릴 때 화면만 보낸다(0.1.2 M1 사전 확인).
+        // 1049(대체 화면)를 먼저 보내야 ConPTY가 그리는 대체 화면이 xterm.js의 대체 화면에 들어간다. 1004는 ConPTY가 시작할 때 켠다.
+        static readonly string[] Kept = { "1049", "2004", "1004", "25" };
+        readonly char[] _mode = new char[4];    // 마지막 값 'h'(켬) 또는 'l'(끔), 본 적 없으면 0
         bool _afterA;           // 바로 앞 OSC(제목 빼고)가 진짜 133;A
         bool _logged133, _logged99;   // 버린 시퀀스는 세션마다 처음 한 번만 적는다. 시퀀스 수만 개를 담은 파일도 있다
 
@@ -84,21 +92,34 @@ namespace Sill.Host
             }
         }
 
-        // ESC ] … (BEL | ESC \). 시퀀스가 o 메시지 경계에서 나뉠 수 있으므로 상태를 호출 사이에 유지한다.
+        // ESC ] … (BEL | ESC \). 시퀀스가 o 메시지 경계에서 나뉠 수 있으므로 상태를 호출 사이에 유지한다. 모드(ESC [ ? … h|l)도 여기서 읽는다(0.1.2).
         // 탐색기에 알릴 폴더가 있으면 돌려준다. 존재 확인은 lock 밖에서 부르는 쪽이 한다.
         public string Output(string text)
         {
             lock (_lock)
             {
                 _moved = null;
+                Rang = false;
                 foreach (char ch in text)
                 {
                     bool afterEsc = _esc;
                     _esc = ch == '\x1b';
-                    if (afterEsc && ch == ']') { _osc = new StringBuilder(); continue; }
-                    if (_osc == null) continue;
-                    if (ch == '\a' || (afterEsc && ch == '\\')) { Osc(_osc.ToString()); _osc = null; }
-                    else if (afterEsc || _osc.Length > 4096) _osc = null;
+                    if (afterEsc && ch == ']') { _osc = new StringBuilder(); _oscLong = false; continue; }
+                    if (afterEsc && ch == '[') { _csi = new StringBuilder(); _osc = null; continue; }
+                    if (_csi != null)
+                    {
+                        // 매개변수와 중간 바이트(0x20–0x3F)를 모으고, 끝 바이트에서 CSI ? 값;값 h|l만 본다.
+                        if (ch >= ' ' && ch <= '?' && _csi.Length < 32) { _csi.Append(ch); continue; }
+                        if ((ch == 'h' || ch == 'l') && _csi.Length > 1 && _csi[0] == '?') Mode(_csi.ToString(1, _csi.Length - 1), ch);
+                        _csi = null;
+                        continue;
+                    }
+                    // OSC 밖의 BEL은 벨이다. OSC 안의 BEL은 그 OSC의 끝이다(셸 통합의 133·9;9, 창 제목).
+                    if (_osc == null) { if (ch == '\a') Rang = true; continue; }
+                    if (ch == '\a' || (afterEsc && ch == '\\')) { if (!_oscLong) Osc(_osc.ToString()); _osc = null; }
+                    else if (afterEsc) _osc = null;
+                    // 긴 OSC(52 클립보드 등)는 내용만 버린다. OSC를 버리면 그 끝 BEL이 벨로 세어진다(0.2.0 M2 독립 검토).
+                    else if (_osc.Length >= 4096) _oscLong = true;
                     else if (!_esc) _osc.Append(ch);
                 }
                 // 한 번에 읽은 출력에 프롬프트가 여럿이면(cd 두 줄을 붙여 넣음) 마지막 폴더만 알린다. 되먹임 목록에도 알린 것만 넣는다.
@@ -111,12 +132,34 @@ namespace Sill.Host
         // 마지막 창 제목(OSC 0·2). ConPTY는 제목을 바뀔 때만 보내므로, 새 페이지(WebView2 복구)에는 sill-host가 다시 보낸다(M7).
         public volatile string Title;
 
+        void Mode(string values, char set)
+        {
+            foreach (var v in values.Split(';'))
+            {
+                int i = Array.IndexOf(Kept, v);
+                if (i >= 0) _mode[i] = set;
+            }
+        }
+
+        // 본 모드의 마지막 값을 Kept 순서로. 새 페이지에 다시 그리기 전에 보낸다.
+        public string Modes()
+        {
+            lock (_lock)
+            {
+                var s = new StringBuilder();
+                for (int i = 0; i < Kept.Length; i++)
+                    if (_mode[i] != 0) s.Append("\x1b[?").Append(Kept[i]).Append(_mode[i]);
+                return s.ToString();
+            }
+        }
+
         void Osc(string s)
         {
             // 제목은 ConPTY가 따로 끼워 보낼 수 있으므로 _afterA를 건드리지 않는다.
             if (s.StartsWith("0;") || s.StartsWith("2;")) { Title = s.Substring(2); return; }
             bool afterA = _afterA;
             _afterA = false;
+            if (Notification(s)) { Rang = true; return; }
             if (s.StartsWith("9;9;"))
             {
                 // 셸 통합은 A와 9;9를 한 번에 쓴다. A와 B 사이에는 사용자 프롬프트(남이 정한 저장소 이름 등)가 그려지므로 그 안의 9;9는 믿지 않는다.
@@ -142,6 +185,21 @@ namespace Sill.Host
                 if (next != null && !SameDir(next, _cwd)) Cd(next);
             }
             else if (s.StartsWith("133;") && !_logged133) { _logged133 = true; Log("133 무시(난수 없음) {0}", s.Length > 40 ? s.Substring(0, 40) : s); }
+        }
+
+        // 데스크톱 알림을 부탁하는 OSC(0.2.0 M2). 9;글은 iTerm2식이고, 9;숫자…는 ConEmu의 하위 명령(9;9 폴더, 9;4 진행)이라 뺀다.
+        // 777;notify는 Ghostty 등, 99는 kitty. kitty의 질의(p=?)와 덜 끝난 조각(d=0)은 알림이 아니다.
+        static readonly Regex ConEmu = new Regex(@"^9;\d+(;|$)");
+
+        static bool Notification(string s)
+        {
+            if (s.StartsWith("9;")) return s.Length > 2 && !ConEmu.IsMatch(s);
+            if (s.StartsWith("777;notify;")) return true;
+            if (!s.StartsWith("99;")) return false;
+            int end = s.IndexOf(';', 3);
+            foreach (var kv in (end < 0 ? s.Substring(3) : s.Substring(3, end - 3)).Split(':'))
+                if (kv == "p=?" || kv == "d=0") return false;
+            return true;
         }
 
         static bool SameDir(string a, string b)

@@ -17,6 +17,7 @@ namespace Sill.Host
         public string Title;                // 셸의 시작 제목. 패널의 탭 제목이 된다(M7)
         public string CommandLine;
         public Func<string, string> Cd;     // cd 한 줄(Enter 포함). 그 셸이 갈 수 없는 경로면 null. 셸 통합이 없으면 Cd 자체가 null
+        public string Absorb;               // 크기를 바꾼 뒤 셸이 버리는 첫 글자 대신 넣는 키. 셸 통합이 아무 일도 하지 않게 묶음(Git Bash만, 0.2.2)
 
         public static readonly string SettingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Sill\settings.json");
 
@@ -48,6 +49,7 @@ try {
         // starship처럼 프롬프트마다 PS1을 새로 쓰는 설정은 133;B를 지운다. PROMPT_COMMAND 배열의 끝(bash 5.1부터 모두 실행)에서
         // B가 없으면 다시 붙인다. 그보다 오래된 bash는 첫 원소만 실행하므로 __sill_b가 돌지 않고 전과 같다(M8).
         // 난수는 사용자 프로필을 읽기 전에 셸 변수로 옮기고 지운다(export하지 않음).
+        // Ctrl+^는 아무 일도 하지 않게 묶는다. Git Bash가 크기 변경 뒤 버리는 첫 글자 자리에 sill-host가 넣는 키다(Shell.Absorb, 0.2.2).
         const string BashIntegration = @"__sill_n=$SILL_NONCE; unset SILL_NONCE
 [ -r /etc/profile ] && . /etc/profile
 if [ -r ~/.bash_profile ]; then . ~/.bash_profile; elif [ -r ~/.bash_login ]; then . ~/.bash_login; elif [ -r ~/.profile ]; then . ~/.profile; fi
@@ -59,6 +61,7 @@ PROMPT_COMMAND+=(__sill_b)
 __sill_cd() { cd -- ""$(cat -- ""$SILL_CD"")""; }
 bind -x '""\e[99~"": __sill_cd'
 bind '""\e[24;8~"": ""\e[99~\C-m""'
+bind '""\C-^"": """"'
 : > ""$SILL_CD""
 ";
 
@@ -155,6 +158,7 @@ bind '""\e[24;8~"": ""\e[99~\C-m""'
                 Title = "bash",
                 CommandLine = "\"" + bash + "\" --rcfile \"" + rc.Replace('\\', '/') + "\" -i",
                 Cd = p => "cd -- '" + p.Replace("'", @"'\''") + "'\r",
+                Absorb = "\x1e",    // Ctrl+^
             };
         }
 

@@ -20,7 +20,7 @@ namespace Sill
     // 페이지와 band 사이에서는 한 터미널의 메시지에 번호가 붙는다(i2 dir). M6, M7, M9.
     static class Shared
     {
-        public const string Version = "0.2.1";
+        public const string Version = "0.2.2";
 
         [ThreadStatic] static byte[] _buf;      // 읽는 스레드마다 하나. 메시지마다 64 KB를 새로 만들지 않는다(M10)
 

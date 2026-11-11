@@ -59,6 +59,9 @@ namespace Sill.Host
 
         public void Started(Action<string> write, Func<string, string> cd, string keyFile) { lock (_lock) { _write = write; _cd = cd; _keyFile = keyFile; } }
 
+        // 셸이 프롬프트에서 입력을 읽고 있다(대기 또는 입력 중). 프로그램이 도는 동안은 false.
+        public bool AtPrompt { get { lock (_lock) return _state != Busy; } }
+
         // 셸이 시작된 뒤의 c. sill-host의 폴더 작업 스레드가 받은 순서대로 부른다(M8). 시작 전의 c는 StartDir에 바로 들어간다.
         public void Folder(string path)
         {

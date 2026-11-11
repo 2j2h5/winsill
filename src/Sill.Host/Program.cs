@@ -143,6 +143,7 @@ namespace Sill.Host
                                 bool same = c == cols && r == rows;
                                 if (same || _detached) Replay(pipe, sync, c, r);
                                 else lock (Pending) Saved.Size(c + "," + r);
+                                if (shell.Absorb != null) _absorb = shell.Absorb;    // ConPTY가 다시 그린 출력을 받은 뒤 Pump가 넣는다. 그 출력보다 먼저 둔다
                                 if (same) pty.Resize((short)(c - 1), r);
                                 pty.Resize(c, r);
                                 cols = c; rows = r;
@@ -251,6 +252,22 @@ namespace Sill.Host
         // 파이프가 끊긴 때부터 다시 붙은 뒤 첫 r까지. 출력은 보관만 한다. Pending 잠금 안에서만 바꾼다(0.1.2).
         static bool _detached;
 
+        // Git Bash(MSYS 런타임)는 ConPTY 크기가 바뀐 뒤 처음 읽는 글자를 버린다. 화면에 출력이 많으면 크기 변경마다 30–40 %였고,
+        // 1 s 뒤에 쳐도 같았다(탭을 뗀 뒤나 패널 크기를 바꾼 뒤 친 첫 글자, 0.2.2). 그래서 크기를 바꾸면 셸 통합이 아무 일도 하지 않게 묶은
+        // 키(Shell.Absorb)를 하나 넣어 버려질 글자가 되게 한다. 버려지지 않으면 셸이 받고 아무 일도 없다. 크기 변경과 입력은 ConPTY에
+        // 따로 가므로 바로 넣으면 키가 크기 변경보다 먼저 닿기도 했다(5번에 한 번꼴). ConPTY는 크기를 바꾸면 화면을 다시 보내므로
+        // 그 출력을 받은 뒤 Pump가 넣는다. 프로그램이 도는 동안에는 넣지 않고(실행 중인 프로그램에는 입력을 넣지 않는다),
+        // 셸이 프롬프트로 돌아온 출력 뒤에 넣는다.
+        static string _absorb;
+
+        static void Absorb(Pty pty, Sync sync)
+        {
+            string key = Interlocked.Exchange(ref _absorb, null);
+            if (key == null) return;
+            if (sync.AtPrompt) pty.Write(key);
+            else Interlocked.CompareExchange(ref _absorb, key, null);
+        }
+
         static void Out(string s)
         {
             if (s.Length == 0) return;
@@ -291,6 +308,7 @@ namespace Sill.Host
                     var text = new string(chars, 0, c);
                     string moved = sync.Output(text);
                     Out(text);
+                    Absorb(pty, sync);
                     // 알람(0.2.0 M2). 바이너리 파일을 출력하면 BEL이 수천 개이므로 1 s에 한 번까지만 band를 깨운다.
                     // 보고 있는지는 band가 정한다. b-는 settings.json의 alertOpensPanel이 false라 닫힌 패널을 열지 않는다는 뜻이다.
                     if (sync.Rang && DateTime.UtcNow - lastBell >= TimeSpan.FromSeconds(1))

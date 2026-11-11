@@ -269,6 +269,20 @@ $fast = WaitFor { ([regex]::Matches($script:text, 'sill-ok')).Count -gt $ok } 30
 $info['끊긴 경로 뒤 입력'] = '{0:F0} ms' -f $sw.Elapsed.TotalMilliseconds
 $results['끊긴 경로 뒤 입력(2 s 이하)'] = $fast -and $sw.Elapsed.TotalSeconds -le 2
 
+# 0.2.2: Git Bash(MSYS 런타임)는 ConPTY 크기가 바뀐 뒤 처음 읽는 글자를 버렸다(화면에 출력이 많으면 30–40 %, 1 s 뒤에 쳐도 같음).
+# sill-host가 크기를 바꾼 뒤 아무 일도 하지 않는 키를 하나 넣는다. 출력, 크기 변경, 입력을 다섯 번 되풀이한다. 끝은 100x30(뒤의 옛 크기 항목).
+$lost = 0
+for ($k = 0; $k -lt 5; $k++) {
+    $n = Prompts; Send "i$($c.lines)`r"; WaitPrompt $n; WaitFor { $false } 0.5 | Out-Null
+    Send $(if ($k % 2) { 'r100,30' } else { 'r96,30' }); WaitFor { $false } 0.3 | Out-Null
+    $ok = ([regex]::Matches($script:text, 'sill-ok')).Count
+    Send "i$($c.ok)`r"
+    if (-not (WaitFor { ([regex]::Matches($script:text, 'sill-ok')).Count -gt $ok } 3)) { $lost++; Send ('i' + [char]3) }
+    WaitFor { $false } 0.5 | Out-Null
+}
+Send 'r100,30'; Start-Sleep -Milliseconds 300
+$results['크기 변경 뒤 첫 글자(5번)'] = $lost -eq 0
+
 # 0.1.2: 셸이 돌 때 파이프가 끊겨도 sill-host는 같은 이름으로 3 s 동안 다시 연결을 기다린다(탐색기 탭 떼기).
 # 다시 붙은 새 페이지의 첫 r에는 지난 출력(옛 크기의 z와 글), 제목, 모드(ConPTY가 켠 포커스 보고 ?1004h), 지금 화면이 차례로 온다.
 function Get-Children { @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($hostProc.Id)" | ForEach-Object { $_.ProcessId }) }

@@ -257,6 +257,7 @@ host.addEventListener('message', e => {
   else if (m[0] === '-') remove(id);    // 셸이 코드 0으로 끝나 band가 닫았다
   else if (!t) return;
   else if (m[0] === 'b') t.tab.classList.add('bell');
+  else if (m[0] === 'f') t.tab.classList.remove('bell');    // band가 그 터미널이 보이는 것을 보고 지웠다(0.2.1)
   else if (m[0] === 'o') t.term.write(m.slice(space + 1));
   else if (m[0] === 'z') replay(t, m.slice(space + 1));
   else if (m[0] === 'x' && !t.ended) {

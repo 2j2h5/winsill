@@ -21,6 +21,7 @@ namespace Sill.Host
         // ponytail: 어느 클라이언트가 이 세션에 붙었는지는 모름. 다른 터미널에서 붙어 있으면 그 터미널이 울린다. Claude Code가 알려 주면 그것으로 바꾼다.
         public static int Hook()
         {
+            if (StillWorking()) return 0;
             bool ring = InSill;
             if (!ring && Environment.GetEnvironmentVariable("CLAUDE_JOB_DIR") != null)
             {
@@ -29,6 +30,40 @@ namespace Sill.Host
             }
             if (ring) Console.Out.Write("{\"terminalSequence\":\"\\u0007\"}");
             return 0;
+        }
+
+        // Stop은 Claude가 백그라운드 작업(셸, 하위 에이전트, Monitor 등)이나 예약된 깨우기(/loop 등)를 남긴 채 턴을 끝낼 때도 오고,
+        // 작업이 끝나면 Claude가 다시 불려 진짜 끝에 Stop이 또 온다. 앞의 것에 울리면 알람이 일하는 중간에 나가고, Sill은 볼 때까지
+        // 한 번만 알리므로 진짜 끝은 묻힌다. Stop 입력의 background_tasks·session_crons가 비어 있을 때만 울린다(Claude Code hooks 문서).
+        static bool StillWorking()
+        {
+            if (!Console.IsInputRedirected) return false;   // 콘솔에서 직접 부르면 입력을 기다리지 않음
+            try
+            {
+                string json;
+                using (var r = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false))) json = r.ReadToEnd();   // 콘솔 코드 페이지가 아니라 UTF-8, BOM은 뗌
+                var input = new System.Web.Script.Serialization.JavaScriptSerializer().DeserializeObject(json)
+                    as System.Collections.Generic.Dictionary<string, object>;
+                object ev;
+                if (input == null || !input.TryGetValue("hook_event_name", out ev) || (ev as string) != "Stop") return false;
+                var pending = new System.Collections.Generic.List<string>();
+                foreach (string key in new[] { "background_tasks", "session_crons" })
+                {
+                    object list;
+                    if (!input.TryGetValue(key, out list) || !(list is object[])) continue;
+                    foreach (object item in (object[])list)
+                    {
+                        var d = item as System.Collections.Generic.Dictionary<string, object>;
+                        object type = null, status = null;
+                        if (d != null) { d.TryGetValue("type", out type); d.TryGetValue("status", out status); }
+                        pending.Add(key == "session_crons" ? "cron" : type + ":" + status);
+                    }
+                }
+                if (pending.Count == 0) return false;
+                Log("hook Stop 건너뜀(아직 일하는 중: {0})", string.Join(", ", pending));
+                return true;
+            }
+            catch (Exception e) { Log("hook 입력 못 읽음: {0}", e.Message); return false; }
         }
 
         static bool ClaudeInSill()

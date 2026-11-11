@@ -45,6 +45,8 @@ namespace Sill.Band
         bool _startHidden;                  // 패널을 닫아 둔 탭을 떼어 넘겨받음. 첫 ShowDW(true)에서 보이지 않은 채 닫는다(0.1.2)
         // 알람(0.2.0 M2). 배지가 있는 터미널(보지 않는 동안 이미 알림), 알람으로 열기 전의 초점 창과 초점을 가져가지 않을 때까지의 시각.
         readonly HashSet<int> _badged = new HashSet<int>();
+        Timer _seen;                        // 배지가 있는 동안 그 터미널이 보이는지 본다(0.2.1)
+        DateTime _keepBadge;                // 보이는 터미널에 온 알람의 배지를 이때까지 둔다
         IntPtr _focusBeforeAlert;
         DateTime _quietUntil;
         bool Quiet { get { return DateTime.UtcNow < _quietUntil; } }
@@ -351,20 +353,48 @@ namespace Sill.Band
         // 사용자가 닫은 뒤에도 다음 알람에 다시 연다(개발자 결정, M2 결과 검토). 벨을 계속 내는 프로그램이면 alertOpensPanel로 끈다.
         void Alert(int id, bool mayOpen)
         {
-            const uint GA_ROOT = 2;
             if (_view == null || !_terms.ContainsKey(id)) return;
-            IntPtr root = Native.GetAncestor(_view.Handle, GA_ROOT);
-            bool front = Native.GetForegroundWindow() == root;
-            IntPtr tab = Native.FindWindowEx(root, IntPtr.Zero, "ShellTabWindowClass", null);   // 활성 탭은 z-순서 맨 위(M6)
-            bool tabActive = tab != IntPtr.Zero && Native.IsChild(tab, _view.Handle);
-            bool shown = _view.Visible;
-            if (front && shown && tabActive && id == _active && PanelFocused()) return;
+            IntPtr root;
+            bool front, tabActive, shown = _view.Visible;
+            Where(out root, out front, out tabActive);
+            bool inView = front && shown && tabActive && id == _active;
+            if (inView && PanelFocused()) return;
             if (!_badged.Add(id)) return;
             Post("b" + id);
+            // 보이는 터미널(초점은 파일 목록 등)이면 배지를 2 s만 둔다(Windows Terminal: 초점 있는 탭의 벨 표시는 2 s 뒤 지움).
+            if (inView) _keepBadge = DateTime.UtcNow.AddSeconds(2);
+            if (_seen == null) { _seen = new Timer { Interval = 500 }; _seen.Tick += (s, e) => Safe("배지 확인", CheckSeen); }
+            _seen.Start();
             bool open = tabActive && !shown && mayOpen;
             int flashes = front ? 0 : Flash(root);
             if (open) OpenForAlert(id);
             Log("알람 {0} 배지=새 패널={1} 반짝임={2}", id, open ? "열기" : (shown ? "보임" : "그대로"), flashes == 0 ? "없음" : flashes + "번");
+        }
+
+        // 이 탭의 탐색기 창과, 그 창이 전경인지, 이 탭이 활성인지(활성 탭은 z-순서 맨 위, M6).
+        void Where(out IntPtr root, out bool front, out bool tabActive)
+        {
+            const uint GA_ROOT = 2;
+            root = Native.GetAncestor(_view.Handle, GA_ROOT);
+            front = Native.GetForegroundWindow() == root;
+            IntPtr tab = Native.FindWindowEx(root, IntPtr.Zero, "ShellTabWindowClass", null);
+            tabActive = tab != IntPtr.Zero && Native.IsChild(tab, _view.Handle);
+        }
+
+        // 배지는 사용자가 그 터미널을 볼 수 있게 되면 지운다: 창이 전경, 패널이 보임, 이 탭이 활성, 그 터미널이 활성 Sill 탭(0.2.1).
+        // 초점은 보지 않는다. 탐색기는 창이 앞으로 올 때 초점을 파일 목록에 돌려주곤 해서, 작업 표시줄로 돌아와 읽어도 배지가 남았다.
+        // Windows Terminal도 그 탭이 초점을 받으면(창을 앞으로 가져오면 마지막 터미널이 받음) 지운다. 페이지는 입력 칸이 초점을 받아도 지운다.
+        void CheckSeen()
+        {
+            if (_badged.Count == 0 || _view == null) { _seen.Stop(); return; }
+            if (DateTime.UtcNow < _keepBadge || !_view.Visible || !_badged.Contains(_active)) return;
+            IntPtr root;
+            bool front, tabActive;
+            Where(out root, out front, out tabActive);
+            if (!front || !tabActive) return;
+            _badged.Remove(_active);
+            Post("f" + _active);
+            Log("배지 지움 {0}(보임)", _active);
         }
 
         // Windows가 전경 전환을 막을 때 반짝이는 횟수(ForegroundFlashCount, 기본 7)만큼 반짝인다. 끝나면 단추는 강조된 채 남는다.
@@ -704,6 +734,7 @@ namespace Sill.Band
             foreach (var s in _terms.Values) s.Dispose();
             _terms.Clear();
             _badged.Clear();
+            if (_seen != null) { _seen.Dispose(); _seen = null; }
             // 닫는 동안 band 창이 포커스를 받으면(GotFocus) 닫힌 컨트롤러를 부르지 않도록 먼저 비운다.
             if (_web != null) { var web = _web; _web = null; web.Close(); }
             if (_bar != IntPtr.Zero) { Native.RemoveWindowSubclass(_bar, BarProc, UIntPtr.Zero); _bar = IntPtr.Zero; }

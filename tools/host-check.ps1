@@ -342,14 +342,22 @@ $info['q → 끝남'] = '{0:F2} s' -f $sec
 $results['q → 바로 끝남(1 s 이하, 셸까지)'] = $exited -and $sec -le 1 -and $kids.Count -gt 0 -and (Get-Alive $kids).Count -eq 0
 $pipe.Dispose()
 # 0.2.0: Sill 플러그인의 훅이 부르는 hook은 TERM_PROGRAM이 Sill일 때만 terminalSequence를 쓴다.
-function Invoke-Hook([string]$tp) {
+# 0.2.1: Stop 입력에 백그라운드 작업이나 예약된 깨우기가 남아 있으면(아직 일하는 중) 쓰지 않는다. 입력은 Claude Code처럼 UTF-8로 넣고 닫는다.
+function Invoke-Hook([string]$tp, [string]$json = '') {
     $psi = New-Object Diagnostics.ProcessStartInfo("$PSScriptRoot\..\bin\sill-host.exe", 'hook')
-    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true
-    $psi.EnvironmentVariables.Remove('TERM_PROGRAM')
+    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardInput = $true
+    $psi.EnvironmentVariables.Remove('TERM_PROGRAM'); $psi.EnvironmentVariables.Remove('CLAUDE_JOB_DIR')
     if ($tp) { $psi.EnvironmentVariables['TERM_PROGRAM'] = $tp }
-    $p = [Diagnostics.Process]::Start($psi); $o = $p.StandardOutput.ReadToEnd(); $p.WaitForExit(5000) | Out-Null; $o
+    $p = [Diagnostics.Process]::Start($psi)
+    $b = [Text.Encoding]::UTF8.GetBytes($json); $p.StandardInput.BaseStream.Write($b, 0, $b.Length); $p.StandardInput.Close()
+    $o = $p.StandardOutput.ReadToEnd(); $p.WaitForExit(5000) | Out-Null; $o
 }
-$results['hook: Sill 안에서만 terminalSequence'] = (Invoke-Hook 'Sill') -eq '{"terminalSequence":"\u0007"}' -and (Invoke-Hook '') -eq '' -and (Invoke-Hook 'vscode') -eq ''
+$bel = '{"terminalSequence":"\u0007"}'
+$results['hook: Sill 안에서만 terminalSequence'] = (Invoke-Hook 'Sill') -eq $bel -and (Invoke-Hook '') -eq '' -and (Invoke-Hook 'vscode') -eq ''
+$results['hook: 백그라운드 작업이 남은 Stop에는 없음'] = (Invoke-Hook 'Sill' '{"hook_event_name":"Stop","background_tasks":[{"id":"t1","type":"shell","status":"running"}],"session_crons":[]}') -eq '' -and
+    (Invoke-Hook 'Sill' '{"hook_event_name":"Stop","background_tasks":[],"session_crons":[{"id":"c1","schedule":"*/5 * * * *","recurring":true,"prompt":"x"}]}') -eq '' -and
+    (Invoke-Hook 'Sill' '{"hook_event_name":"Stop","background_tasks":[],"session_crons":[]}') -eq $bel -and
+    (Invoke-Hook 'Sill' '{"hook_event_name":"PermissionRequest","background_tasks":[{"id":"t1","type":"shell","status":"running"}]}') -eq $bel
 
 Remove-Item $base -Recurse -Force
 

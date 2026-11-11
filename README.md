@@ -74,7 +74,7 @@ Sill handles these keys itself and doesn't send them to the shell (except `^C`).
 
 When a terminal you aren't looking at rings the bell (BEL) or asks for a desktop notification (OSC 9, OSC 777 or OSC 99), Sill lets you know:
 
-- A small dot, in the color the taskbar uses when it flashes, appears to the right of that terminal's name on its tab. It goes away when you click into the terminal.
+- A small dot, in the color the taskbar uses when it flashes, appears to the right of that terminal's name on its tab. It goes away as soon as you can see that terminal: when its File Explorer window is in front with the panel open on that terminal, or when you switch to it.
 - If the File Explorer window isn't in the foreground, its taskbar button flashes.
 - If the panel is closed, it opens and shows that terminal, without taking the keyboard focus.
 

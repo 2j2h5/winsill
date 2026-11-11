@@ -90,11 +90,11 @@ Any program that rings the bell or sends one of these notification sequences tri
 & "$env:LOCALAPPDATA\Programs\Sill\bin\sill-host.exe" agents
 ```
 
-It sets up the agents it finds and shows what it did. Everything it adds rings the bell only inside Sill (it checks `TERM_PROGRAM=Sill`) and does nothing in other terminals. `sill-host.exe agents remove` takes it all out again, and uninstalling Sill does too.
+It sets up the agents it finds and shows what it did. Everything it adds rings the bell only inside Sill (it checks `TERM_PROGRAM=Sill`, and for a Claude Code background session, whether Claude Code is open in a Sill terminal) and does nothing in other terminals. `sill-host.exe agents remove` takes it all out again, and uninstalling Sill does too. Agents load these settings when a session starts, so restart sessions that were already running (in Claude Code, `/reload-plugins` also works).
 
 | Agent | What Sill sets up | Alerts when |
 |---|---|---|
-| Claude Code | The Sill plugin, installed with `claude plugin install` | Claude finishes, asks for permission, or stops on an error, also in a background session you open from Sill. Tested with 2.1.322 |
+| Claude Code | The Sill plugin, installed with `claude plugin install` | Claude finishes (after the background tasks it started), asks for permission, or stops on an error, also in a background session you open from Sill. Tested with 2.1.322 |
 | Codex | Nothing. Codex notifies by default when its terminal isn't focused (`[tui] notifications`) | Codex finishes or asks for approval. Tested with 0.167.1 |
 | GitHub Copilot CLI | A hook file, `%USERPROFILE%\.copilot\hooks\sill.json` | The agent finishes a turn or shows a notification (permission prompt and others). Not tested yet |
 | opencode | A plugin file, `~\.config\opencode\plugins\sill.js` | The session goes idle or asks for permission. Not tested yet |

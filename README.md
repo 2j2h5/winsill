@@ -2,9 +2,9 @@
 
 [![Latest release](https://img.shields.io/github/v/release/2j2h5/winsill)](https://github.com/2j2h5/winsill/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/2j2h5/winsill)](LICENSE)
-![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4)
+![Windows 11 | 10 untested](https://img.shields.io/badge/Windows-11%20%7C%2010%20untested-0078D4)
 
-Sill adds an integrated terminal to the bottom of File Explorer on Windows 11 and Windows 10, like the terminal panel in KDE Dolphin. Open PowerShell, Command Prompt (cmd) or Git Bash in the folder you are looking at, and File Explorer and the terminal follow each other's current folder.
+Sill adds an integrated terminal to the bottom of File Explorer on Windows, like the terminal panel in KDE Dolphin. Open PowerShell, Command Prompt (cmd) or Git Bash in the folder you are looking at, and File Explorer and the terminal follow each other's current folder.
 
 ![Sill: a PowerShell terminal panel docked at the bottom of a Windows 11 File Explorer window, with two terminal tabs](assets/screenshot.png)
 
@@ -16,10 +16,10 @@ Sill extends File Explorer itself. It is not a replacement file manager. The pan
 ## Features
 
 - **Terminal inside File Explorer:** a panel at the bottom of every File Explorer window. `` Ctrl+` `` opens and closes it, like the terminal in VS Code.
-- **Two-way folder sync:** File Explorer and the shell stay in the same folder. Sill never types into a running program such as Claude Code or `vim`.
+- **Two-way folder sync:** File Explorer and the shell stay in the same folder. Sill types `cd` only while the shell waits at its prompt, which its shell integration marks, so it doesn't type into a running program such as Claude Code or `vim`.
 - **Terminal tabs:** several terminals per window, with VS Code keys (`` Ctrl+Shift+` ``, `Ctrl+PageUp`/`Ctrl+PageDown`).
 - **Tab tear-off:** drag a File Explorer tab out into its own window, or into another window, and its terminals keep running and move with it.
-- **Alerts:** when a terminal you aren't looking at rings the bell, for example when Claude Code or Codex finishes, its tab shows a dot, the taskbar button flashes, and a closed panel opens.
+- **Alerts:** when a terminal you aren't looking at rings the bell, for example when Claude Code or Codex finishes, its tab shows a dot, the taskbar button flashes, and a closed panel opens (you can turn that off). For Claude Code and other AI coding agents, check **Receive alerts from AI coding agents** when you install Sill. Codex alerts without it.
 - **Your shell:** PowerShell 7, Windows PowerShell, cmd, Git Bash, or any command line.
 - **"Open in Sill"** on the right-click menu of a folder background.
 - **Light and dark themes** that follow Windows.
@@ -30,7 +30,7 @@ Sill extends File Explorer itself. It is not a replacement file manager. The pan
 - Windows 10 version 1903 or later, or Windows 11
 - [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/). Windows 11 already has it.
 
-Sill has only been tested on Windows 11 (build 26300). Each terminal uses about 86 MB of memory (PowerShell, including its WebView2 share).
+Sill has only been tested on Windows 11 26H2 (build 26300). Windows 10 should work but hasn't been tested. Each terminal uses about 86 MB of memory (PowerShell, including its WebView2 share).
 
 ## Install
 

@@ -34,6 +34,9 @@ namespace Sill.Band
         RightDock _right;
         bool _movingRight;
         bool _initialPosition = true;
+        Timer _appearanceTimer;
+        string _appearanceStamp, _appearanceJson;
+        int _appearanceGeneration;
         CoreWebView2Controller _web;
         Task<CoreWebView2Environment> _envUsed;    // _web을 만든 환경. 브라우저 프로세스가 죽으면 이 환경을 버린다
         DateTime _recovered;                        // 마지막으로 WebView2를 다시 만든 시각
@@ -332,6 +335,13 @@ namespace Sill.Band
         // 새 페이지(처음, WebView2 복구 뒤)에 터미널 목록을 준다. 페이지는 탭마다 크기를 보내고, 같은 크기면 sill-host가 화면을 다시 보낸다.
         void ListTerminals()
         {
+            RefreshAppearance(true);
+            if (_appearanceTimer == null)
+            {
+                _appearanceTimer = new Timer { Interval = 2000 };
+                _appearanceTimer.Tick += (s, e) => Safe("터미널 테마 확인", () => RefreshAppearance(false));
+                _appearanceTimer.Start();
+            }
             Post(_right != null ? "dright" : "dbottom");
             foreach (int id in _terms.Keys) Post("+" + id);
             Post("a" + _active);
@@ -561,6 +571,56 @@ namespace Sill.Band
             _view.BackColor = Theme.Content;
             if (_web != null) _web.DefaultBackgroundColor = Theme.Content;
             if (_bar != IntPtr.Zero) Native.InvalidateRect(_bar, IntPtr.Zero, true);
+            RefreshAppearance(true);
+        }
+
+        async void RefreshAppearance(bool force)
+        {
+            if (_web == null) return;
+            var view = _view;
+            var web = _web;
+            int generation = _appearanceGeneration;
+            try
+            {
+                string path = TerminalAppearance.FindSettings();
+                string stamp = TerminalAppearance.Stamp(path) + ":" + Theme.Light;
+                if (!force && stamp == _appearanceStamp) return;
+                _appearanceStamp = stamp;
+                generation = ++_appearanceGeneration;
+                bool light = Theme.Light;
+                // Settings and background-image I/O must not block Explorer's UI.
+                var loaded = await Task.Run(() =>
+                {
+                    var result = path == null ? new Dictionary<string, object>() : TerminalAppearance.Resolve(
+                        File.ReadAllText(path), File.ReadAllText(Path.Combine(Dir, "web", "terminal-schemes.json")), light, Path.GetDirectoryName(path));
+                    return new KeyValuePair<Dictionary<string, object>, string>(result, TerminalAppearance.Serialize(result));
+                });
+                if (_view != view || _web != web || generation != _appearanceGeneration) return;
+                var data = loaded.Key;
+                _appearanceJson = loaded.Value;
+                Post("j" + _appearanceJson);
+                if (data.ContainsKey("options"))
+                {
+                    var options = (Dictionary<string, object>)data["options"];
+                    var colors = (Dictionary<string, object>)options["theme"];
+                    object background;
+                    if (colors.TryGetValue("background", out background))
+                    {
+                        string color = (string)background;
+                        _view.BackColor = ColorTranslator.FromHtml(color.Length == 9 ? color.Substring(0, 7) : color);
+                        _web.DefaultBackgroundColor = _view.BackColor;
+                    }
+                    Log("Windows Terminal 테마 적용: {0}, {1}", data["profile"], data["scheme"]);
+                }
+            }
+            catch (Exception e)
+            {
+                if (_view != view || _web != web || generation != _appearanceGeneration) return;
+                // A partially written/invalid settings file must not discard a
+                // working theme. The next edit is retried by the timer.
+                if (_appearanceJson == null) Post("j{}");
+                Log("Windows Terminal 테마 읽기 실패: {0}", e.Message);
+            }
         }
 
         // 분할선은 BaseBar 창 클래스의 바탕 브러시(COLOR_3DFACE, 다크 모드에서도 #F0F0F0)가 칠한다(M7).
@@ -819,6 +879,9 @@ namespace Sill.Band
 
         void DestroyView()
         {
+            if (_appearanceTimer != null) { _appearanceTimer.Dispose(); _appearanceTimer = null; }
+            _appearanceGeneration++;
+            _appearanceStamp = null; _appearanceJson = null;
             if (_right != null) { _right.Dispose(); _right = null; }
             if (_events != null) { Safe("Unadvise", () => _events.Unadvise(_cookie)); Release(_events); _events = null; }
             Release(_browser);

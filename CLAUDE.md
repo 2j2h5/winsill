@@ -47,6 +47,12 @@ bin\sill-host.exe agents [remove] [quiet]                           # 깔린 에
 - `Ctrl+Alt+Shift+\``(상주 호스트 action 4)와 페이지의 `w`는 현재 탐색기 폴더에서 `wt.exe -w new new-tab -d <경로>`를 실행한다. Windows Terminal은 별도 창이며 기본 프로필을 사용한다. `terminal: windows-terminal`이면 Ctrl+\`도 이 동작을 한다. 기본 terminal 값은 panel이다. Windows Terminal을 ConPTY 안의 셸로 취급하지 않는다.
 - TerminalLauncher.cs 때문에 host에는 System.Windows.Forms.dll 참조가 필요하다. tools/feature-check.ps1은 드라이브/UNC 루트·한글·공백·세미콜론의 Windows Terminal 인수 처리도 검사한다.
 
+### Windows Terminal 모양 따르기
+
+- band의 TerminalAppearance.cs가 Windows Terminal 기본 프로필의 defaults/list를 합쳐 색상표·글꼴(포인트→CSS px)·커서·padding·배경 이미지만 읽는다. Terminal 설정은 수정하지 않는다. JSONC 주석/후행 쉼표를 지원한다. Windows Terminal의 내장 색상표는 web/terminal-schemes.json(Microsoft/Terminal, MIT)에 있다.
+- ListTerminals와 2초 타이머가 설정 경로/수정 시각/길이를 확인한다. 파일 읽기·이미지 인코딩은 Task.Run에서 하고, 세대 번호와 view/web 비교로 닫힌 창이나 오래된 응답을 버린다. 잘못 쓰인 JSON은 현재 테마를 유지하고 다음 수정 때 재시도한다. 페이지의 j 메시지가 기존/새 xterm 옵션을 모두 갱신하며 fit으로 크기를 맞춘다.
+- tools/appearance-check.ps1은 사용자 설정을 건드리지 않는 fixture 검사 18개를 수행한다. build.ps1의 기존 검사 뒤 실행된다. 창 전체 아크릴 효과는 Explorer가 담당하고, 패널 이미지에는 data URI만 전달한다.
+
 **Sill** (저장소 `2j2h5/winsill`): Windows 탐색기 창 하단에 Dolphin(KDE)식 터미널 패널을 붙이는 셸 확장이다. 탐색기를 대체하는 앱이 아니라 탐색기 **자체**를 확장한다.
 
 ## 아키텍처

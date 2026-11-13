@@ -46,9 +46,16 @@
   body.right #resize { display: block; }
   body.right #strip { left: 9px; }
   body.right .term { left: 15px; }
+  #background { position: absolute; inset: 28px 0 0 0; background-repeat: no-repeat; pointer-events: none; }
+  body { --dock-inset: 0px; }
+  body.right { --dock-inset: 9px; }
+  body.terminal-theme .term { top: calc(28px + var(--pad-top)); right: var(--pad-right);
+    bottom: var(--pad-bottom); left: calc(var(--dock-inset) + var(--pad-left)); }
+  body.right #background { left: 9px; }
 </style>
 </head>
 <body>
+<div id="background"></div>
 <div id="resize" role="separator" aria-label="Resize panel" aria-orientation="vertical"></div>
 <div id="strip"><div id="tabs"></div><button id="new" title="New Terminal (Ctrl+Shift+`)">&#xE710;</button><button id="dock" aria-label="Move panel to right" title="Move panel to right (Ctrl+Alt+`)">&#x25E7;</button><button id="terminal" aria-label="Open Windows Terminal" title="Open Windows Terminal (Ctrl+Alt+Shift+`)">&#x2197;</button><button id="close" title="Close (Ctrl+`)">&#xE8BB;</button></div>
 <script src="xterm.js"></script>
@@ -74,7 +81,47 @@ const themes = {
   },
 };
 const lightMode = matchMedia('(prefers-color-scheme: light)');
-const theme = () => themes[lightMode.matches ? 'light' : 'dark'];
+let appearance = null;
+const theme = () => {
+  const colors = appearance?.options.theme || themes[lightMode.matches ? 'light' : 'dark'];
+  return appearance?.backgroundImage ? { ...colors, background: '#00000000' } : colors;
+};
+const terminalOptions = () => ({
+  fontFamily: '"Cascadia Mono", Consolas, monospace', fontSize: 13, fontWeight: 400,
+  cursorStyle: 'block', cursorWidth: 1, minimumContrastRatio: 4.5,
+  ...appearance?.options, theme: theme(),
+});
+
+function applyAppearance(value) {
+  appearance = value.options ? value : null;
+  document.body.classList.toggle('terminal-theme', !!appearance);
+  for (const key of ['--bg', '--text', '--strip', '--hover', '--hover-tab', '--sep']) document.body.style.removeProperty(key);
+  const background = document.getElementById('background');
+  background.style.backgroundImage = 'none';
+  if (appearance) {
+    document.body.style.setProperty('--bg', appearance.options.theme.background || '#0c0c0c');
+    document.body.style.setProperty('--text', appearance.options.theme.foreground || '#cccccc');
+    document.body.style.setProperty('--strip', appearance.light ? '#e8e8e8' : '#202020');
+    document.body.style.setProperty('--hover', appearance.light ? 'rgba(0,0,0,.04)' : 'rgba(255,255,255,.06)');
+    document.body.style.setProperty('--hover-tab', appearance.light ? 'rgba(0,0,0,.03)' : 'rgba(255,255,255,.045)');
+    document.body.style.setProperty('--sep', appearance.light ? 'rgba(0,0,0,.2)' : 'rgba(255,255,255,.25)');
+    let padding = String(appearance.padding).split(',').map(n => Number(n.trim()));
+    if (![1, 2, 4].includes(padding.length) || padding.some(n => !Number.isFinite(n) || n < 0 || n > 128)) padding = [8];
+    if (padding.length === 1) padding = Array(4).fill(padding[0]);
+    if (padding.length === 2) padding = [padding[0], padding[1], padding[0], padding[1]];
+    for (const [i, side] of ['left', 'top', 'right', 'bottom'].entries()) document.body.style.setProperty('--pad-' + side, padding[i] + 'px');
+    if (appearance.backgroundImage) {
+      background.style.backgroundImage = 'url(' + JSON.stringify(appearance.backgroundImage) + ')';
+      background.style.opacity = appearance.imageOpacity;
+      background.style.backgroundSize = appearance.imageSize;
+      background.style.backgroundPosition = appearance.imagePosition;
+    }
+  }
+  for (const t of terms.values()) {
+    for (const [key, value] of Object.entries(terminalOptions())) t.term.options[key] = value;
+    if (t.id === active) t.fit.fit();
+  }
+}
 
 // 번호 → 터미널. band가 번호 순으로 알려 주므로 Map의 순서가 탭 순서다. active는 보이는 터미널의 번호.
 const terms = new Map();
@@ -129,11 +176,9 @@ function create(id) {
   el.className = 'term';
   document.body.appendChild(el);
   const term = new Terminal({
-    fontFamily: '"Cascadia Mono", Consolas, monospace',
-    fontSize: 13,
+    ...terminalOptions(),
+    allowTransparency: true,
     cursorBlink: true,
-    theme: theme(),
-    minimumContrastRatio: 4.5,    // 흰 바탕의 PSReadLine 노란 명령어 등, 대비가 낮은 글자만 진하게(VS Code 기본값)
     // OSC 8 링크(http·https만)는 Ctrl+클릭으로 band가 기본 브라우저에서 연다. 핸들러가 없으면 xterm.js가 확인 창 뒤 WebView2 팝업을 연다(0.1.1).
     linkHandler: {
       activate: (e, uri) => { if (e.ctrlKey) host.postMessage('u' + uri); },
@@ -259,6 +304,7 @@ const scrollToPrompt = (t, up) => {
 
 host.addEventListener('message', e => {
   const m = e.data, space = m.indexOf(' ');
+  if (m[0] === 'j') { applyAppearance(JSON.parse(m.slice(1))); return; }
   if (m[0] === 'd') {
     document.body.classList.toggle('right', m === 'dright');
     const label = m === 'dright' ? 'Move panel to bottom' : 'Move panel to right';

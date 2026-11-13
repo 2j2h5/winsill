@@ -48,6 +48,8 @@ Remove-Item $test
 
 & "$root\tools\feature-check.ps1"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
+& "$root\tools\appearance-check.ps1"
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 New-Item -ItemType Directory -Force "$out\web" | Out-Null
 

@@ -168,7 +168,18 @@ A change applies to the next terminal you open.
 
 ### Appearance
 
-The panel follows the Windows app mode (light or dark) under Settings > Personalization > Colors.
+When Windows Terminal is installed, the panel follows its default profile's
+appearance: built-in/custom color scheme, profile color overrides, font family,
+font size/weight, cursor, padding, and local background image. The Terminal
+`profiles.defaults` settings are combined with the selected profile's overrides.
+Changes to Windows Terminal's settings are picked up within two seconds without
+restarting the shell. Sill only reads these settings; it does not change them.
+
+If no Windows Terminal settings file is found, the panel follows the Windows app
+mode (light or dark) under Settings > Personalization > Colors. Window-level
+acrylic/transparency effects remain controlled by Explorer. The panel supports
+local PNG/JPEG/GIF/WebP/BMP background images up to 8 MB; a missing image leaves the
+profile's background color in place, just as in Terminal.
 
 ## Troubleshooting
 

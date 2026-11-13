@@ -1,5 +1,6 @@
 ﻿# bin\ 빌드. .NET SDK 없이 Windows에 들어 있는 csc.exe(C# 5)를 쓴다.
 # 외부 의존성은 고정 버전을 deps\에 한 번만 받고, 받을 때 SHA-256으로 확인한다. 다르면 아무것도 건드리기 전에 멈춘다.
+param([switch]$Isolated)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $out = Join-Path $root 'bin'
@@ -45,13 +46,16 @@ if ($LASTEXITCODE) { exit $LASTEXITCODE }
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 Remove-Item $test
 
+
 New-Item -ItemType Directory -Force "$out\web" | Out-Null
 
 # 탐색기가 DLL을 잡고 있으면 덮어쓸 수 없으므로 폴더 창 프로세스(/factory)만 종료한다. 작업 표시줄 explorer는 그대로 둔다.
 # sill-host는 band가 사라지면 스스로 끝나지만, 남아 있으면 exe를 덮어쓸 수 없으므로 함께 정리한다.
-Get-CimInstance Win32_Process -Filter "Name='explorer.exe' or Name='sill-host.exe'" |
+if (-not $Isolated) {
+    Get-CimInstance Win32_Process -Filter "Name='explorer.exe' or Name='sill-host.exe'" |
     Where-Object { $_.Name -eq 'sill-host.exe' -or $_.CommandLine -match '/factory' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Wait-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
+}
 
 # SeparateProcess 이전에 연 창에서 band를 띄웠다면 작업 표시줄 explorer가 DLL을 잡고 있다.
 # 사용 중인 파일도 이름은 바꿀 수 있으므로 옆으로 치우고, 지난번에 치운 것은 지울 수 있으면 지운다.
@@ -74,4 +78,4 @@ Copy-Item "$root\web\*", "$xterm\package\lib\xterm.js", "$xterm\package\css\xter
 Copy-Item -Recurse -Force "$root\claude-plugin" $out
 
 # 단축키 상주 프로세스(sill-host keys)도 위에서 함께 끝냈으므로, 등록되어 있으면 새 exe로 다시 띄운다.
-if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sill -ErrorAction SilentlyContinue) { Start-Process "$out\sill-host.exe" keys }
+if (-not $Isolated -and (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sill -ErrorAction SilentlyContinue)) { Start-Process "$out\sill-host.exe" keys -WindowStyle Hidden }

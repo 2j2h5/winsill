@@ -167,6 +167,7 @@ You don't need the .NET SDK. The build uses the C# compiler that comes with Wind
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build.ps1             # bin\ (runs the unit tests first; closes File Explorer folder windows that hold the DLL)
+powershell -ExecutionPolicy Bypass -File .\build.ps1 -Isolated   # build without stopping Explorer or installed Sill processes
 powershell -ExecutionPolicy Bypass -File .\tools\register.ps1    # register bin\ for the current user
 powershell -ExecutionPolicy Bypass -File .\tools\host-check.ps1  # sill-host test without File Explorer
 powershell -ExecutionPolicy Bypass -File .\tools\tearoff-check.ps1  # drags a File Explorer tab with the mouse (hands off while it runs)

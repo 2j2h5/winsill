@@ -31,6 +31,9 @@ namespace Sill.Band
 
         object _site;
         View _view;
+        RightDock _right;
+        bool _movingRight;
+        bool _initialPosition = true;
         CoreWebView2Controller _web;
         Task<CoreWebView2Environment> _envUsed;    // _web을 만든 환경. 브라우저 프로세스가 죽으면 이 환경을 버린다
         DateTime _recovered;                        // 마지막으로 WebView2를 다시 만든 시각
@@ -77,6 +80,7 @@ namespace Sill.Band
                 DestroyView();
                 _site = pUnkSite;
                 if (pUnkSite == null) return Native.S_OK;
+                _initialPosition = true;
 
                 IntPtr parent;
                 int hr = ((IOleWindow)pUnkSite).GetWindow(out parent);
@@ -206,6 +210,12 @@ namespace Sill.Band
                 else if (m == "t") ApplyTheme();
                 else if (m == "l") ListTerminals();
                 else if (m == "+") NewTerminal("새 터미널");
+                else if (m == "d") SetPosition(_right == null);
+                else if (m.StartsWith("v"))
+                {
+                    int delta;
+                    if (_right != null && int.TryParse(m.Substring(1), out delta)) _right.ResizeBy(Math.Max(-200, Math.Min(200, delta)));
+                }
                 else if (m[0] == 'u') OpenLink(m.Substring(1));
                 else if (m == "s") { if (_terms.ContainsKey(_active)) _terms[_active].Send(m); }
                 else
@@ -321,6 +331,7 @@ namespace Sill.Band
         // 새 페이지(처음, WebView2 복구 뒤)에 터미널 목록을 준다. 페이지는 탭마다 크기를 보내고, 같은 크기면 sill-host가 화면을 다시 보낸다.
         void ListTerminals()
         {
+            Post(_right != null ? "dright" : "dbottom");
             foreach (int id in _terms.Keys) Post("+" + id);
             Post("a" + _active);
             foreach (int id in _badged) Post("b" + id);    // WebView2를 다시 만든 페이지에도 배지를 되살린다(0.2.0 M2)
@@ -426,6 +437,7 @@ namespace Sill.Band
         void OnKey(int action)
         {
             const int KeyToggle = 0, KeyNew = 1;
+            if (action == 3) { _quietUntil = DateTime.MinValue; SetPosition(_right == null); _view.Focus(); return; }
             _quietUntil = DateTime.MinValue;    // 사용자가 키로 부르면 알람으로 연 직후라도 초점을 준다
             bool shown = _view.Visible, focused = shown && PanelFocused();
             Log("Sill.Key {0} 보임={1} 포커스={2}", action, shown, focused);
@@ -443,9 +455,63 @@ namespace Sill.Band
         void ShowPanel(bool show)
         {
             if (!show) FocusFileList();
+            if (_right != null)
+            {
+                if (show && _terms.Count == 0) NewTerminal("다시 열기");
+                AttachRight();
+                _right.Show(show);
+                if (_web != null) _web.IsVisible = show;
+                if (show && !Quiet) _view.Focus();
+                return;
+            }
             // 창 메시지 처리 중에 바를 여닫지 않고 메시지 루프로 미룬다.
             _view.BeginInvoke(new Action(() => Safe(show ? "패널 열기" : "패널 닫기", () =>
                 _browser.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, _browser, new object[] { "{" + Clsid + "}", show, null }))));
+        }
+
+        void AttachRight()
+        {
+            if (_right == null) return;
+            object shellView = null;
+            var browser = ShellBrowser();
+            try
+            {
+                IntPtr hwnd;
+                if (browser == null || browser.QueryActiveShellView(out shellView) != Native.S_OK || ((IShellView)shellView).GetWindow(out hwnd) != Native.S_OK)
+                    throw new InvalidOperationException("Explorer has no active folder view.");
+                _right.Attach(hwnd);
+            }
+            finally { Release(shellView); Release(browser); }
+        }
+
+        void SetPosition(bool right)
+        {
+            if (right == (_right != null)) return;
+            if (right)
+            {
+                _right = new RightDock(_view);
+                try
+                {
+                    AttachRight();
+                    _movingRight = true;
+                    _browser.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, _browser, new object[] { "{" + Clsid + "}", false, null });
+                    _right.Show(true);
+                }
+                catch { _right.Dispose(); _right = null; throw; }
+                finally { _movingRight = false; }
+            }
+            else
+            {
+                _right.Show(false);
+                _right.Dispose();
+                _right = null;
+                ShowPanel(true);
+            }
+            if (_web != null) { _web.Bounds = _view.ClientRectangle; _web.IsVisible = true; }
+            Post(right ? "dright" : "dbottom");
+            if (right && !Quiet) _view.Focus();
+            Safe("패널 위치 저장", () => Preferences.SavePosition(right));
+            Log("패널 위치 {0}", right ? "오른쪽" : "하단");
         }
 
         // --- 탐색기가 그리는 모양(M7) ---
@@ -576,7 +642,7 @@ namespace Sill.Band
             if (hr != Native.S_OK) { Log("IWebBrowser2 없음 hr=0x{0:X8}", hr); return; }
             var iid = typeof(DWebBrowserEvents2).GUID;
             ((ComTypes.IConnectionPointContainer)_browser).FindConnectionPoint(ref iid, out _events);
-            _events.Advise(new BrowserEvents(() => Safe("NavigateComplete2", () => SendFolder(_active, "이동"))), out _cookie);
+            _events.Advise(new BrowserEvents(() => Safe("NavigateComplete2", () => { AttachRight(); SendFolder(_active, "이동"); })), out _cookie);
         }
 
         // 탐색기 → 터미널은 활성 터미널(또는 새로 시작하는 터미널)에만(M9).
@@ -643,6 +709,8 @@ namespace Sill.Band
             return Guard("ShowDW", () =>
             {
                 Log("ShowDW({0})", fShow);
+                if (_movingRight) return Native.S_OK;
+                if (_right != null) { ShowPanel(fShow); return Native.S_OK; }
                 if (!fShow) _startHidden = false;
                 // 패널을 닫아 둔 탭을 떼었다. 셸을 받으려고 상주 프로세스가 패널을 열었으므로 보이지 않은 채 바로 닫는다(0.1.2).
                 if (_view != null && fShow && _startHidden) { Log("닫혀 있던 패널"); ShowPanel(false); return Native.S_OK; }
@@ -661,6 +729,11 @@ namespace Sill.Band
                 }
                 if (_view != null) _view.Visible = fShow;
                 if (_web != null) _web.IsVisible = fShow;
+                if (fShow && _initialPosition)
+                {
+                    _initialPosition = false;
+                    if (Preferences.Right) _view.BeginInvoke(new Action(() => Safe("초기 오른쪽 배치", () => SetPosition(true))));
+                }
                 return Native.S_OK;
             });
         }
@@ -728,6 +801,7 @@ namespace Sill.Band
 
         void DestroyView()
         {
+            if (_right != null) { _right.Dispose(); _right = null; }
             if (_events != null) { Safe("Unadvise", () => _events.Unadvise(_cookie)); Release(_events); _events = null; }
             Release(_browser);
             _browser = null;
@@ -752,13 +826,14 @@ namespace Sill.Band
         public event Action<int> Key;
 
         public bool CaptionOff;             // 이번에 보일 때 BSIS_NOCAPTION을 적용한 뒤. 그 전의 배치에는 띠 머리가 있다
+        public bool RightMode;
         bool _captionLogged;
 
         protected override void WndProc(ref Message m)
         {
             const int WM_WINDOWPOSCHANGING = 0x46;
             if (m.Msg == (int)KeyMessage && Key != null) { Key(m.WParam.ToInt32()); return; }
-            if (m.Msg == WM_WINDOWPOSCHANGING) Place(m.LParam);
+            if (m.Msg == WM_WINDOWPOSCHANGING && !RightMode) Place(m.LParam);
             base.WndProc(ref m);
         }
 

@@ -46,6 +46,8 @@ if ($LASTEXITCODE) { exit $LASTEXITCODE }
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 Remove-Item $test
 
+& "$root\tools\feature-check.ps1"
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 New-Item -ItemType Directory -Force "$out\web" | Out-Null
 
@@ -64,12 +66,12 @@ if (Test-Path "$out\Sill.Band.dll") { Move-Item "$out\Sill.Band.dll" ("$out\Sill
 
 $core ="$wv2\lib\net462\Microsoft.Web.WebView2.Core.dll"
 & $csc /nologo /codepage:65001 /target:library /platform:x64 /optimize `
-    /out:"$out\Sill.Band.dll" /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:"$core" `
-    (Get-ChildItem "$root\src\Sill.Band\*.cs").FullName "$root\src\Shared.cs"
+    /out:"$out\Sill.Band.dll" /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll /r:"$core" `
+    (Get-ChildItem "$root\src\Sill.Band\*.cs").FullName "$root\src\Shared.cs" "$root\src\Preferences.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & $csc /nologo /codepage:65001 /target:winexe /platform:x64 /optimize /win32icon:"$root\assets\sill.ico" `
     /out:"$out\sill-host.exe" /r:System.Web.Extensions.dll /r:System.Management.dll `
-    (Get-ChildItem "$root\src\Sill.Host\*.cs").FullName "$root\src\Shared.cs"
+    (Get-ChildItem "$root\src\Sill.Host\*.cs").FullName "$root\src\Shared.cs" "$root\src\Preferences.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 Copy-Item $core, "$wv2\runtimes\win-x64\native\WebView2Loader.dll" $out

@@ -50,6 +50,7 @@ Sill has only been tested on Windows 11 26H2 (build 26300). Windows 10 should wo
 |---|---|
 | `` Ctrl+` `` | Open the panel, focus it, or close it (in a File Explorer window) |
 | `` Ctrl+Shift+` `` | New terminal |
+| `` Ctrl+Alt+` `` | Move the panel between the bottom and right of Explorer |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Previous / next terminal (wraps around) |
 | `Ctrl+,` | Open `settings.json` in Notepad |
 | `Ctrl+Up` / `Ctrl+Down` | Scroll to the previous / next command |
@@ -69,6 +70,14 @@ Sill handles these keys itself and doesn't send them to the shell (except `^C`).
 - `exit` closes the tab. If the shell ends with a non-zero exit code, the tab stays open and shows the code. Press any key to restart it.
 - The tab title is the title the running program sets, or the shell name.
 - Drag a File Explorer tab out into a new window, back again, or into another window's tab bar: the panel moves with it, with the same shells and their output. Closing a File Explorer tab or window ends its terminals.
+
+### Panel position
+
+Use the **Move panel** button in the tab strip or `` Ctrl+Alt+` `` to switch between
+the bottom and the right. Existing terminal sessions keep running. Drag the left
+edge of a right panel to adjust its width. Closing the panel gives its space back
+to Explorer. The last position is saved as `panelPosition` in `settings.json` and
+is used by new panels; other open panels keep their own position.
 
 ### Alerts
 

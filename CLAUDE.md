@@ -35,6 +35,13 @@ bin\sill-host.exe agents [remove] [quiet]                           # 깔린 에
 
 ## 프로젝트 개요
 
+### 오른쪽 패널
+
+- `Ctrl+Alt+\``(Sill.Key 3)와 페이지의 `d`는 하단/오른쪽을 전환한다. `RightDock.cs`는 활성 `IShellView` 창의 형제 위치로 같은 View를 옮기고, `WM_WINDOWPOSCHANGING`에서 파일 목록의 오른쪽 공간을 확보한다. 원래 전체 경계를 기억해 숨김·하단 복귀·Dispose 때 복원한다. 탐색으로 shell view가 바뀌면 NavigateComplete2에서 다시 붙인다. 셸/세션은 다시 만들지 않는다.
+- 페이지의 오른쪽 전용 드래그 손잡이는 pointer capture로 `v<폭 증감>`을 보낸다. 폭은 가용 영역 절반 이하로 제한한다. `panelPosition`은 Preferences.cs가 settings.json의 다른 키를 보존하며 원자적으로 저장한다.
+- 공통 Preferences.cs 때문에 band에도 System.Web.Extensions.dll 참조가 필요하다.
+- tools/feature-check.ps1은 설정 보존·손상 파일 보존·네이티브 창 배치/숨김/탐색 교체/복원 검사를 수행한다. build.ps1 -Isolated는 기존 탐색기와 Sill 프로세스를 종료하거나 단축키 호스트를 시작하지 않고 빌드한다.
+
 **Sill** (저장소 `2j2h5/winsill`): Windows 탐색기 창 하단에 Dolphin(KDE)식 터미널 패널을 붙이는 셸 확장이다. 탐색기를 대체하는 앱이 아니라 탐색기 **자체**를 확장한다.
 
 ## 아키텍처

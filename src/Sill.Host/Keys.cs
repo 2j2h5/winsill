@@ -17,7 +17,7 @@ namespace Sill.Host
     // 탭 떼기(0.1.2 M1): 떼낸 탭의 band가 남긴 기록을 보고, 새 창에 패널을 열어 그 탭의 sill-host들을 넘긴다(TakeOver).
     static class Keys
     {
-        const int Toggle = 0, New = 1, Focus = 2;          // Sill.Key의 wParam
+        const int Toggle = 0, New = 1, Focus = 2, Dock = 3;
         const string Clsid = "{AE2C3550-FB10-4D93-B6E1-4FBED3C0AD90}";
         static readonly uint KeyMessage = Native.RegisterWindowMessage("Sill.Key");
         static Native.WinEventProc _hook;                   // GC가 거두지 않게 붙잡아 둔다
@@ -47,7 +47,7 @@ namespace Sill.Host
                     Native.MSG msg;
                     while (Native.GetMessage(out msg, IntPtr.Zero, 0, 0) > 0)
                     {
-                        if (msg.message == WM_HOTKEY) Act(Native.GetForegroundWindow(), msg.wParam.ToInt32() == 1 ? New : Toggle);
+                        if (msg.message == WM_HOTKEY) Act(Native.GetForegroundWindow(), msg.wParam.ToInt32());
                         else if (msg.message == WM_TIMER) Watch(Native.GetForegroundWindow());
                     }
                 });
@@ -263,7 +263,7 @@ namespace Sill.Host
 
         static void Watch(IntPtr hwnd)
         {
-            const uint MOD_CONTROL = 0x2, MOD_SHIFT = 0x4, MOD_NOREPEAT = 0x4000, VK_OEM_3 = 0xC0;
+            const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_SHIFT = 0x4, MOD_NOREPEAT = 0x4000, VK_OEM_3 = 0xC0;
             bool explorer = ClassOf(hwnd) == "CabinetWClass";
             if (explorer)
                 try { TakeOver(hwnd); }
@@ -271,10 +271,11 @@ namespace Sill.Host
             if (explorer == _registered) return;
             _registered = explorer;
             Log("단축키 {0} (전경 {1})", explorer ? "등록" : "해제", ClassOf(hwnd));
-            if (!explorer) { Native.UnregisterHotKey(IntPtr.Zero, 0); Native.UnregisterHotKey(IntPtr.Zero, 1); return; }
+            if (!explorer) { foreach (int key in new[] { Toggle, New, Dock }) Native.UnregisterHotKey(IntPtr.Zero, key); return; }
             bool toggle = Native.RegisterHotKey(IntPtr.Zero, 0, MOD_CONTROL | MOD_NOREPEAT, VK_OEM_3);
             bool restart = Native.RegisterHotKey(IntPtr.Zero, 1, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_OEM_3);
-            if (!toggle || !restart) Log("단축키 등록 실패 toggle={0} restart={1} err={2}", toggle, restart, Marshal.GetLastWin32Error());
+            bool dock = Native.RegisterHotKey(IntPtr.Zero, Dock, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_OEM_3);
+            if (!toggle || !restart || !dock) Log("단축키 등록 실패 toggle={0} new={1} dock={2} err={3}", toggle, restart, dock, Marshal.GetLastWin32Error());
         }
 
         static void Act(IntPtr frame, int action)
@@ -290,6 +291,13 @@ namespace Sill.Host
                     // 열면 band의 UIActivateIO가 패널에 포커스를 준다(M0·M1). 새 band는 터미널 하나로 시작하므로 새 터미널 키도 여기서 끝난다.
                     tab.GetType().InvokeMember("ShowBrowserBar", BindingFlags.InvokeMethod, null, tab, new object[] { Clsid, true, null });
                     Log("패널 열기 action={0}", action);
+                    // ShowBrowserBar constructs the band synchronously. Apply the
+                    // dock action on the first use as well as on existing panels.
+                    if (action == Dock)
+                    {
+                        band = FindBand(frame);
+                        if (band != IntPtr.Zero) Native.PostMessage(band, KeyMessage, (IntPtr)Dock, IntPtr.Zero);
+                    }
                     return;
                 }
                 Native.PostMessage(band, KeyMessage, (IntPtr)action, IntPtr.Zero);

@@ -17,7 +17,7 @@ namespace Sill.Host
     // 탭 떼기(0.1.2 M1): 떼낸 탭의 band가 남긴 기록을 보고, 새 창에 패널을 열어 그 탭의 sill-host들을 넘긴다(TakeOver).
     static class Keys
     {
-        const int Toggle = 0, New = 1, Focus = 2, Dock = 3;
+        const int Toggle = 0, New = 1, Focus = 2, Dock = 3, Terminal = 4;
         const string Clsid = "{AE2C3550-FB10-4D93-B6E1-4FBED3C0AD90}";
         static readonly uint KeyMessage = Native.RegisterWindowMessage("Sill.Key");
         static Native.WinEventProc _hook;                   // GC가 거두지 않게 붙잡아 둔다
@@ -105,7 +105,18 @@ namespace Sill.Host
             return found;
         }
 
-        static string PathOf(object tab) { return (string)Get(Get(Get(Get(tab, "Document"), "Folder"), "Self"), "Path"); }
+        static string PathOf(object tab)
+        {
+            object doc = null, folder = null, self = null;
+            try
+            {
+                doc = Get(tab, "Document"); folder = Get(doc, "Folder"); self = Get(folder, "Self");
+                return (string)Get(self, "Path");
+            }
+            finally { Release(self); Release(folder); Release(doc); }
+        }
+
+        static void Release(object value) { if (value != null && Marshal.IsComObject(value)) Marshal.ReleaseComObject(value); }
 
         static bool SamePath(string a, string b) { return string.Equals(a.TrimEnd('\\'), b.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase); }
 
@@ -271,11 +282,12 @@ namespace Sill.Host
             if (explorer == _registered) return;
             _registered = explorer;
             Log("단축키 {0} (전경 {1})", explorer ? "등록" : "해제", ClassOf(hwnd));
-            if (!explorer) { foreach (int key in new[] { Toggle, New, Dock }) Native.UnregisterHotKey(IntPtr.Zero, key); return; }
+            if (!explorer) { foreach (int key in new[] { Toggle, New, Dock, Terminal }) Native.UnregisterHotKey(IntPtr.Zero, key); return; }
             bool toggle = Native.RegisterHotKey(IntPtr.Zero, 0, MOD_CONTROL | MOD_NOREPEAT, VK_OEM_3);
             bool restart = Native.RegisterHotKey(IntPtr.Zero, 1, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_OEM_3);
             bool dock = Native.RegisterHotKey(IntPtr.Zero, Dock, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_OEM_3);
-            if (!toggle || !restart || !dock) Log("단축키 등록 실패 toggle={0} new={1} dock={2} err={3}", toggle, restart, dock, Marshal.GetLastWin32Error());
+            bool terminal = Native.RegisterHotKey(IntPtr.Zero, Terminal, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, VK_OEM_3);
+            if (!toggle || !restart || !dock || !terminal) Log("단축키 등록 실패 toggle={0} new={1} dock={2} terminal={3} err={4}", toggle, restart, dock, terminal, Marshal.GetLastWin32Error());
         }
 
         static void Act(IntPtr frame, int action)
@@ -283,6 +295,13 @@ namespace Sill.Host
             try
             {
                 if (ClassOf(frame) != "CabinetWClass") { Log("탐색기 창 아님 {0}", ClassOf(frame)); return; }
+                if (action == Terminal || (action == Toggle && Preferences.WindowsTerminal))
+                {
+                    object tab = ActiveTab(frame);
+                    try { if (tab != null) TerminalLauncher.Open(PathOf(tab)); }
+                    finally { Release(tab); }
+                    return;
+                }
                 IntPtr band = FindBand(frame);
                 if (band == IntPtr.Zero)
                 {

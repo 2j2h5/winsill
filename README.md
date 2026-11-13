@@ -51,6 +51,7 @@ Sill has only been tested on Windows 11 26H2 (build 26300). Windows 10 should wo
 | `` Ctrl+` `` | Open the panel, focus it, or close it (in a File Explorer window) |
 | `` Ctrl+Shift+` `` | New terminal |
 | `` Ctrl+Alt+` `` | Move the panel between the bottom and right of Explorer |
+| `` Ctrl+Alt+Shift+` `` | Open Windows Terminal in the active Explorer folder |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Previous / next terminal (wraps around) |
 | `Ctrl+,` | Open `settings.json` in Notepad |
 | `Ctrl+Up` / `Ctrl+Down` | Scroll to the previous / next command |
@@ -78,6 +79,29 @@ the bottom and the right. Existing terminal sessions keep running. Drag the left
 edge of a right panel to adjust its width. Closing the panel gives its space back
 to Explorer. The last position is saved as `panelPosition` in `settings.json` and
 is used by new panels; other open panels keep their own position.
+
+### Windows Terminal
+
+The **Open Windows Terminal** button (↗) or `` Ctrl+Alt+Shift+` `` opens a separate
+Windows Terminal window in the active Explorer folder, using Terminal's default
+profile. Windows Terminal must be installed and its `wt.exe` execution alias must
+be enabled. Virtual folders such as Home have no file-system starting directory.
+Windows Terminal manages its own sessions; Sill's two-way folder synchronization
+and embedded terminal tabs apply to the Sill panel.
+
+To make `` Ctrl+` `` launch Windows Terminal by default, set `terminal` to
+`windows-terminal`. The dock shortcut still opens the embedded panel:
+
+```json
+{
+  "shell": "pwsh",
+  "panelPosition": "right",
+  "terminal": "windows-terminal"
+}
+```
+
+Use `"terminal": "panel"` (the default) for the embedded terminal. `shell` chooses
+the shell inside that panel; Windows Terminal uses its own default profile.
 
 ### Alerts
 

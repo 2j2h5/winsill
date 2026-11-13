@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows.Forms;
 using Sill;
 using Sill.Band;
+using Sill.Host;
 
 namespace Sill.Band { sealed class View : Control { public bool RightMode; } }
 
@@ -30,6 +31,14 @@ static class FeatureTest
             bool failed = false;
             try { Preferences.Save(path, "panelPosition", "right"); } catch { failed = true; }
             Check(failed && File.ReadAllText(path) == "{broken", "Do not overwrite malformed settings");
+            Check(TerminalLauncher.Arguments(@"C:\") == "-w new new-tab -d " + (char)34 + @"C:\\" + (char)34, "Quote drive root");
+            Check(TerminalLauncher.Arguments(@"C:\한글 folder") == "-w new new-tab -d " + (char)34 + @"C:\한글 folder" + (char)34, "Quote Unicode and spaces");
+            Check(TerminalLauncher.Arguments(@"\\server\share\") == "-w new new-tab -d " + (char)34 + @"\\server\share\\" + (char)34, "Quote UNC root");
+            Check(TerminalLauncher.Arguments(@"C:\a;b") == "-w new new-tab -d .", "Do not interpret semicolon as wt command");
+            failed = false;
+            try { TerminalLauncher.Arguments("::{virtual}"); } catch (ArgumentException) { failed = true; }
+            Check(failed, "Reject virtual folders");
+
             using (var parent = new Form { ClientSize = new Size(1000, 700), ShowInTaskbar = false })
             using (var home = new Panel())
             using (var shell = new Panel())

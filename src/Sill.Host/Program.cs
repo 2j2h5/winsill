@@ -35,6 +35,7 @@ namespace Sill.Host
             if (args.Length == 0) return 0;
             if (args[0] == "keys") return Keys.Run(args.Length > 1 && args[1] == "moved");
             if (args[0] == "open") return Keys.Open(args.Length > 1 ? args[1] : "");
+            if (args[0] == "terminal") return TerminalLauncher.Open(args.Length > 1 ? args[1] : "");
             if (args[0] == "hook") return Agents.Hook();
             if (args[0] == "bell") return Agents.Bell();
             if (args[0] == "agents") return Agents.Run(Array.IndexOf(args, "remove") > 0, Array.IndexOf(args, "quiet") > 0);

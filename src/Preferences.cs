@@ -24,6 +24,7 @@ namespace Sill
         }
 
         public static bool Right { get { return Text("panelPosition", "bottom").Equals("right", StringComparison.OrdinalIgnoreCase); } }
+        public static bool WindowsTerminal { get { return Text("terminal", "panel").Equals("windows-terminal", StringComparison.OrdinalIgnoreCase); } }
 
         public static void SavePosition(bool right)
         {

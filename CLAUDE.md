@@ -42,6 +42,11 @@ bin\sill-host.exe agents [remove] [quiet]                           # 깔린 에
 - 공통 Preferences.cs 때문에 band에도 System.Web.Extensions.dll 참조가 필요하다.
 - tools/feature-check.ps1은 설정 보존·손상 파일 보존·네이티브 창 배치/숨김/탐색 교체/복원 검사를 수행한다. build.ps1 -Isolated는 기존 탐색기와 Sill 프로세스를 종료하거나 단축키 호스트를 시작하지 않고 빌드한다.
 
+### Windows Terminal 실행
+
+- `Ctrl+Alt+Shift+\``(상주 호스트 action 4)와 페이지의 `w`는 현재 탐색기 폴더에서 `wt.exe -w new new-tab -d <경로>`를 실행한다. Windows Terminal은 별도 창이며 기본 프로필을 사용한다. `terminal: windows-terminal`이면 Ctrl+\`도 이 동작을 한다. 기본 terminal 값은 panel이다. Windows Terminal을 ConPTY 안의 셸로 취급하지 않는다.
+- TerminalLauncher.cs 때문에 host에는 System.Windows.Forms.dll 참조가 필요하다. tools/feature-check.ps1은 드라이브/UNC 루트·한글·공백·세미콜론의 Windows Terminal 인수 처리도 검사한다.
+
 **Sill** (저장소 `2j2h5/winsill`): Windows 탐색기 창 하단에 Dolphin(KDE)식 터미널 패널을 붙이는 셸 확장이다. 탐색기를 대체하는 앱이 아니라 탐색기 **자체**를 확장한다.
 
 ## 아키텍처

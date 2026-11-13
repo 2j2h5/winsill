@@ -35,7 +35,7 @@
   button:hover { background: var(--hover); }
   .x { width: 20px; height: 20px; font-size: 8px; margin-left: auto; }
   #new { width: 32px; height: 24px; font-size: 12px; }
-  #dock { width: 28px; height: 24px; font: 14px "Segoe UI", sans-serif; }
+  #dock, #terminal { width: 28px; height: 24px; font: 14px "Segoe UI", sans-serif; }
   #dock { margin-left: auto; }
   #close { width: 32px; height: 24px; margin: 0 4px 0 0; }
   /* 터미널은 모두 같은 자리에 겹친다. display: none과 달리 숨은 터미널도 크기를 잴 수 있어, 보이게 하기 전에 맞춘다(M9, M10). */
@@ -50,7 +50,7 @@
 </head>
 <body>
 <div id="resize" role="separator" aria-label="Resize panel" aria-orientation="vertical"></div>
-<div id="strip"><div id="tabs"></div><button id="new" title="New Terminal (Ctrl+Shift+`)">&#xE710;</button><button id="dock" aria-label="Move panel to right" title="Move panel to right (Ctrl+Alt+`)">&#x25E7;</button><button id="close" title="Close (Ctrl+`)">&#xE8BB;</button></div>
+<div id="strip"><div id="tabs"></div><button id="new" title="New Terminal (Ctrl+Shift+`)">&#xE710;</button><button id="dock" aria-label="Move panel to right" title="Move panel to right (Ctrl+Alt+`)">&#x25E7;</button><button id="terminal" aria-label="Open Windows Terminal" title="Open Windows Terminal (Ctrl+Alt+Shift+`)">&#x2197;</button><button id="close" title="Close (Ctrl+`)">&#xE8BB;</button></div>
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
 <script>
@@ -284,6 +284,7 @@ host.addEventListener('message', e => {
 
 document.getElementById('new').onclick = () => host.postMessage('+');
 document.getElementById('dock').onclick = () => host.postMessage('d');
+document.getElementById('terminal').onclick = () => host.postMessage('w');
 const resize = document.getElementById('resize');
 let resizeX = null;
 resize.onpointerdown = e => { if (e.button !== 0) return; resizeX = e.screenX; resize.setPointerCapture(e.pointerId); e.preventDefault(); };

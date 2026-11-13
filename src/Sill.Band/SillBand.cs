@@ -211,6 +211,7 @@ namespace Sill.Band
                 else if (m == "l") ListTerminals();
                 else if (m == "+") NewTerminal("새 터미널");
                 else if (m == "d") SetPosition(_right == null);
+                else if (m == "w") OpenWindowsTerminal();
                 else if (m.StartsWith("v"))
                 {
                     int delta;
@@ -438,6 +439,7 @@ namespace Sill.Band
         {
             const int KeyToggle = 0, KeyNew = 1;
             if (action == 3) { _quietUntil = DateTime.MinValue; SetPosition(_right == null); _view.Focus(); return; }
+            if (action == 4) { OpenWindowsTerminal(); return; }
             _quietUntil = DateTime.MinValue;    // 사용자가 키로 부르면 알람으로 연 직후라도 초점을 준다
             bool shown = _view.Visible, focused = shown && PanelFocused();
             Log("Sill.Key {0} 보임={1} 포커스={2}", action, shown, focused);
@@ -512,6 +514,22 @@ namespace Sill.Band
             if (right && !Quiet) _view.Focus();
             Safe("패널 위치 저장", () => Preferences.SavePosition(right));
             Log("패널 위치 {0}", right ? "오른쪽" : "하단");
+        }
+
+        void OpenWindowsTerminal()
+        {
+            string folder = Folder();
+            var start = new ProcessStartInfo(Path.Combine(Dir, "sill-host.exe"), "terminal " + QuoteArgument(folder ?? ""));
+            start.UseShellExecute = false;
+            start.CreateNoWindow = true;
+            using (Process.Start(start)) { }
+        }
+
+        static string QuoteArgument(string value)
+        {
+            // Explorer paths cannot contain quotes. Double trailing backslashes
+            // before the closing quote so drive roots are passed intact.
+            return "\"" + value.TrimEnd('\\') + (value.EndsWith("\\") ? "\\\\" : "") + "\"";
         }
 
         // --- 탐색기가 그리는 모양(M7) ---

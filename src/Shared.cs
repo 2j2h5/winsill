@@ -20,7 +20,7 @@ namespace Sill
     // 페이지와 band 사이에서는 한 터미널의 메시지에 번호가 붙는다(i2 dir). M6, M7, M9.
     static class Shared
     {
-        public const string Version = "0.2.2";
+        public const string Version = "0.3.0";
 
         [ThreadStatic] static byte[] _buf;      // 읽는 스레드마다 하나. 메시지마다 64 KB를 새로 만들지 않는다(M10)
 
@@ -55,6 +55,7 @@ namespace Sill
         // 줄: 탐색기 창(HWND), 폴더, 패널이 보였는지(1/0), 활성 터미널의 순서(0부터), 터미널마다 파이프 이름(탭 순서). 쓴 시각은 파일의 수정 시각이다.
         public static readonly string HandoffPath = Path.Combine(LogDir, "handoff.txt");
         public static readonly string HandoffOpenPath = Path.Combine(LogDir, "handoff-open.txt");
+        public static readonly string SettingsPath = Path.Combine(LogDir, "settings.json");
         static bool _logDirMade;
 
         // %LOCALAPPDATA%\Sill\<file>에 "시각 [PID] 내용" 한 줄. 여러 프로세스(탐색기 창들, sill-host들)가 같은 파일에 쓴다.

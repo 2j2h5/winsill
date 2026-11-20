@@ -118,7 +118,8 @@ begin
       P := Procs.ItemIndex(I);
       Cmd := '';
       if not VarIsNull(P.CommandLine) then Cmd := Trim(P.CommandLine);
-      if (not KeysOnly) or (Copy(Cmd, Length(Cmd) - 4, 5) = ' keys') then
+      if (not KeysOnly) or (Copy(Cmd, Length(Cmd) - 4, 5) = ' keys') or
+        (Copy(Cmd, Length(Cmd) - 10, 11) = ' keys moved') then
       begin
         Log('sill-host 끝냄: ' + Cmd);
         P.Terminate();

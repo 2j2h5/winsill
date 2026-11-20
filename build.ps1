@@ -1,5 +1,7 @@
 ﻿# bin\ 빌드. .NET SDK 없이 Windows에 들어 있는 csc.exe(C# 5)를 쓴다.
 # 외부 의존성은 고정 버전을 deps\에 한 번만 받고, 받을 때 SHA-256으로 확인한다. 다르면 아무것도 건드리기 전에 멈춘다.
+# -Isolated: 탐색기 창과 sill-host를 끝내지 않고 상주 프로세스도 다시 띄우지 않는다. Sill 패널 안에서도 빌드할 수 있다(돌던 것은 옛 파일로 계속 돈다).
+param([switch]$Isolated)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $out = Join-Path $root 'bin'
@@ -45,22 +47,42 @@ if ($LASTEXITCODE) { exit $LASTEXITCODE }
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 Remove-Item $test
 
+# 오른쪽 배치 단위 시험. 탐색기 창 대신 WinForms 창에 붙여 본다.
+$test = Join-Path $env:TEMP 'sill-rightdock-test.exe'
+& $csc /nologo /codepage:65001 /platform:x64 /define:SILL_TEST /nowarn:169 /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:"$test" "$root\tests\RightDockTest.cs" "$root\src\Sill.Band\RightDock.cs" "$root\src\Sill.Band\Interop.cs" "$root\src\Shared.cs"
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+& $test
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+Remove-Item $test
+
+# Windows Terminal 프로필 읽기 단위 시험. 사용자의 Windows Terminal 설정은 읽지 않는다.
+$test = Join-Path $env:TEMP 'sill-appearance-test.exe'
+& $csc /nologo /codepage:65001 /platform:x64 /r:System.Web.Extensions.dll /out:"$test" "$root\tests\AppearanceTest.cs" "$root\src\Sill.Band\TerminalAppearance.cs"
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+& $test "$root\web\terminal-schemes.json"
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+Remove-Item $test
+
 New-Item -ItemType Directory -Force "$out\web" | Out-Null
 
 # 탐색기가 DLL을 잡고 있으면 덮어쓸 수 없으므로 폴더 창 프로세스(/factory)만 종료한다. 작업 표시줄 explorer는 그대로 둔다.
 # sill-host는 band가 사라지면 스스로 끝나지만, 남아 있으면 exe를 덮어쓸 수 없으므로 함께 정리한다.
-Get-CimInstance Win32_Process -Filter "Name='explorer.exe' or Name='sill-host.exe'" |
+if (-not $Isolated) {
+    Get-CimInstance Win32_Process -Filter "Name='explorer.exe' or Name='sill-host.exe'" |
     Where-Object { $_.Name -eq 'sill-host.exe' -or $_.CommandLine -match '/factory' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Wait-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
+}
 
 # SeparateProcess 이전에 연 창에서 band를 띄웠다면 작업 표시줄 explorer가 DLL을 잡고 있다.
 # 사용 중인 파일도 이름은 바꿀 수 있으므로 옆으로 치우고, 지난번에 치운 것은 지울 수 있으면 지운다.
 Remove-Item "$out\*.old" -ErrorAction SilentlyContinue
 if (Test-Path "$out\Sill.Band.dll") { Move-Item "$out\Sill.Band.dll" ("$out\Sill.Band.{0:yyyyMMddHHmmss}.old" -f (Get-Date)) }
+# -Isolated면 열린 패널·상주 프로세스가 쓰는 sill-host.exe도 비킨다. 돌던 것은 옛 exe로 계속 돌고, 새로 띄우는 것부터 새 exe다.
+if ($Isolated -and (Test-Path "$out\sill-host.exe")) { Move-Item "$out\sill-host.exe" ("$out\sill-host.{0:yyyyMMddHHmmss}.old" -f (Get-Date)) }
 
 $core ="$wv2\lib\net462\Microsoft.Web.WebView2.Core.dll"
 & $csc /nologo /codepage:65001 /target:library /platform:x64 /optimize `
-    /out:"$out\Sill.Band.dll" /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:"$core" `
+    /out:"$out\Sill.Band.dll" /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll /r:"$core" `
     (Get-ChildItem "$root\src\Sill.Band\*.cs").FullName "$root\src\Shared.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & $csc /nologo /codepage:65001 /target:winexe /platform:x64 /optimize /win32icon:"$root\assets\sill.ico" `
@@ -68,10 +90,14 @@ if ($LASTEXITCODE) { exit $LASTEXITCODE }
     (Get-ChildItem "$root\src\Sill.Host\*.cs").FullName "$root\src\Shared.cs"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-Copy-Item $core, "$wv2\runtimes\win-x64\native\WebView2Loader.dll" $out
+# 고정 버전이라 같으면 건너뛴다. -Isolated면 탐색기가 잡고 있어 덮어쓸 수 없다.
+foreach ($f in $core, "$wv2\runtimes\win-x64\native\WebView2Loader.dll") {
+    $dst = Join-Path $out (Split-Path $f -Leaf)
+    if (-not (Test-Path $dst) -or (Get-FileHash $f).Hash -ne (Get-FileHash $dst).Hash) { Copy-Item $f $out }
+}
 Copy-Item "$root\web\*", "$xterm\package\lib\xterm.js", "$xterm\package\css\xterm.css", "$fit\package\lib\addon-fit.js" "$out\web"
 # Claude Code용 Sill 플러그인(0.2.0 M2). sill-host.exe agents가 이것을 %LOCALAPPDATA%\Sill로 복사해 설치한다.
 Copy-Item -Recurse -Force "$root\claude-plugin" $out
 
 # 단축키 상주 프로세스(sill-host keys)도 위에서 함께 끝냈으므로, 등록되어 있으면 새 exe로 다시 띄운다.
-if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sill -ErrorAction SilentlyContinue) { Start-Process "$out\sill-host.exe" keys }
+if (-not $Isolated -and (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sill -ErrorAction SilentlyContinue)) { Start-Process "$out\sill-host.exe" keys }

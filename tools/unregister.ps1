@@ -8,6 +8,6 @@ foreach ($cat in '{00021493-0000-0000-C000-000000000046}', '{00021494-0000-0000-
 }
 Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Sill -ErrorAction SilentlyContinue
 Remove-Item 'HKCU:\Software\Classes\Directory\Background\shell\Sill' -Recurse -ErrorAction SilentlyContinue
-Get-CimInstance Win32_Process -Filter "Name='sill-host.exe'" | Where-Object { $_.CommandLine -match '\skeys\s*$' } |
+Get-CimInstance Win32_Process -Filter "Name='sill-host.exe'" | Where-Object { $_.CommandLine -match '\skeys(\s+moved)?\s*$' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 "unregistered $clsid"

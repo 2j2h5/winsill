@@ -19,7 +19,7 @@ namespace Sill.Host
         public Func<string, string> Cd;     // cd 한 줄(Enter 포함). 그 셸이 갈 수 없는 경로면 null. 셸 통합이 없으면 Cd 자체가 null
         public string Absorb;               // 크기를 바꾼 뒤 셸이 버리는 첫 글자 대신 넣는 키. 셸 통합이 아무 일도 하지 않게 묶음(Git Bash만, 0.2.2)
 
-        public static readonly string SettingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Sill\settings.json");
+        public static readonly string SettingsPath = Shared.SettingsPath;
 
         // 프로필 적재 뒤 prompt 함수를 감싼다. -EncodedCommand로 넘기므로 실행 정책에 걸리지 않는다.
         // Sill의 cd는 키 처리기가 받아 프롬프트를 제자리에 다시 그린다. 등록했다는 표시로 $env:SILL_CD 파일을 만든다(M6).

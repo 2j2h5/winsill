@@ -175,8 +175,10 @@ for ($k = 1; $k -le $Count; $k++) {
     [Native]::Key(0x0D, $false, $false); [Native]::Key(0x0D, $true, $false)
     Start-Sleep 2
     if ($Hidden) {
-        $tab2.ShowBrowserBar($clsid, $false, $null)
-        Wait-Until { @(Get-Since 'band.log' $mb) -match "\[$testPid\] ShowDW\(False\)" } 5 | Out-Null
+        # 사용자처럼 band로 닫는다(Sill.Key 2 초점 → 0 닫기). 오른쪽 배치 중에는 탐색기가 바를 닫힌 것으로 알아 밖에서 부른 ShowBrowserBar를 band가 무시한다.
+        [Native]::PostMessage($band, $keyMsg, [IntPtr]2, [IntPtr]::Zero) | Out-Null; Start-Sleep -Milliseconds 700
+        [Native]::PostMessage($band, $keyMsg, [IntPtr]0, [IntPtr]::Zero) | Out-Null
+        Wait-Until { -not [Native]::IsWindowVisible($band) } 5 | Out-Null
     }
     $shellPids = @(foreach ($h in $hostPids) { Get-CimInstance Win32_Process -Filter "ParentProcessId=$h and Name<>'conhost.exe'" | ForEach-Object { $_.ProcessId } })
 
@@ -220,7 +222,7 @@ for ($k = 1; $k -le $Count; $k++) {
         $r['새 창에서도 패널 닫힘'] = $band2 -ne [IntPtr]::Zero -and -not [Native]::IsWindowVisible($band2)
         $shows = @(@(Get-Since 'band.log' $mb) -match "\[$newPid\] ShowDW\(" | ForEach-Object { Get-LogTime $_ })
         if ($shows.Count -ge 2) { $info['패널 자리가 보인 시간'] = '{0:F0} ms' -f ($shows[1] - $shows[0]).TotalMilliseconds }
-        $newTab.ShowBrowserBar($clsid, $true, $null)        # 다시 열면 지난 출력이 보여야 한다
+        [Native]::PostMessage($band2, $keyMsg, [IntPtr]0, [IntPtr]::Zero) | Out-Null       # 다시 열면 지난 출력이 보여야 한다(Ctrl+`과 같은 길)
         Start-Sleep 1
         $band2 = [Native]::Band($newFrame)
     } else {

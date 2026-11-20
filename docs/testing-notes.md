@@ -85,3 +85,11 @@ M0–M11은 0.1.0까지의 개발 단계로 공개 저장소의 커밋 제목(`M
   - 배지가 지워지는 길은 둘이다(0.2.1). 입력 칸이 초점을 받으면 페이지가 지우고 로그가 없다. band가 그 터미널이 보이는 것을 보고 지우면 `배지 지움 n(보임)`이 남는다. 작업 표시줄로 돌아올 때 탐색기가 초점을 터미널에 돌려주면 페이지 쪽이 먼저 지운다. band 쪽은 창을 앞에 두고 파일 목록에 초점을 둔 채 벨을 받아 본다(2 s 뒤 지움). 새 band는 새 탐색기 프로세스(`explorer.exe /separate`)에서만 적재된다.
   - 가끔 나던 gitbash `다시 붙기: 입력` 실패는 시험이 아니라 Git Bash가 크기 변경 뒤 첫 글자를 버린 것이었다(셸이 code 127로 끝남 = `cho: command not found`). host.log에서 실패한 실행만 code가 127이었다. 재현은 host-check처럼 파이프로 sill-host를 띄워 `seq`로 200줄 출력, 크기 변경, 입력을 되풀이하고 'sill-ok' 수를 센다(다시 붙지 않아도, 1 s를 기다려도 30–40 %, 출력이 없으면 0). 흡수 키로는 여러 글자 키(ESC가 버려져 `[23;8~`가 입력됨)와 포커스 보고(`ESC [ I`, 글자가 아님)는 듣지 않았고 한 글자 `Ctrl+^`만 들었다. PowerShell 5.1은 `` `e ``·`` `u{3} ``를 모르므로 `[char]27`·`[char]3`을 쓴다.
   - 설치 프로그램을 `Start-Process -Wait`로 돌리면 설치가 끝나도 돌아오지 않는다(설치 프로그램이 띄운 상주 프로세스를 기다림). 설치 로그(`/LOG=`)의 `Log closed.`로 끝을 본다.
+- PR #1(오른쪽 배치) 시험에서 배운 것:
+  - 키 없이 시험한다: `explorer.exe /separate`로 새 프로세스 창을 열고 `ShowBrowserBar`, band 창에 `Sill.Key` 3(위치)·2(초점)·0(토글)을 게시하고, `SHELLDLL_DefView`·band 창의 사각형과 부모 클래스, `BaseBar` 보임으로 본다. band 없는 창의 Ctrl+Alt+`만 실제 키가 필요하다(Alt 눌렀다 뗀 뒤 `SetForegroundWindow`, 전경이 시험 창일 때만 보냄. 상주 프로세스의 단축키가 먼저 받는다).
+  - 셸 뷰는 탐색마다 새 창이고, 내 PC는 NavigateComplete2 때 부모가 `ShellTabWindowClass`였다가 나중에 `CtrlNotifySink`로 옮겨진다. 일반 폴더만 보면 놓친다.
+  - Windows Terminal 프로필 켜고 끄기는 `PrintWindow` 캡처의 터미널 바탕 화소로 본다(Campbell #0C0C0C, 탐색기 다크 #191919). settings.json은 바이트와 수정 시각을 저장했다가 되돌린다.
+  - 개발자 PC에서 이 세션이 Sill 패널 밖(Windows Terminal)이고 dev `bin\`이 등록되어 있으면 `build.ps1 -Isolated`로 빌드하고, 바뀐 상주 프로세스는 직접 다시 띄운다.
+  - 오른쪽 배치 중에는 탐색기가 바를 닫힌 것으로 알아, 시험 스크립트가 밖에서 부른 `ShowBrowserBar(false)`는 아무것도 닫지 않고 `(true)`는 빈 하단 바를 연다. tearoff-check `-Hidden`이 이것으로 처음 실패했다. 패널 여닫기는 `Sill.Key` 2(초점) → 0(닫기), 0(열기)으로 한다.
+  - 오른쪽 상태의 tearoff-check는 저장된 위치(`Explorer Bars\{CLSID}\Position`)를 right로 두고 돌린다. 시험 창의 첫 `ShowDW`가 그 값을 따른다. 끝나면 원래 값으로 되돌린다.
+  - 알람 시험은 `AttachConsole(셸 pid)` 스크립트를 `powershell -File`로 따로 띄워 벨을 쓴다(위 0.2.0 M2). 닫힌 오른쪽 패널이 다시 서고 `BaseBar`가 숨은 채인지, 캡처의 커서가 빈 상자인지 본다.

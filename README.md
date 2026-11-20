@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/github/license/2j2h5/winsill)](LICENSE)
 ![Windows 11 | 10 untested](https://img.shields.io/badge/Windows-11%20%7C%2010%20untested-0078D4)
 
-Sill adds an integrated terminal to the bottom of File Explorer on Windows, like the terminal panel in KDE Dolphin. Open PowerShell, Command Prompt (cmd) or Git Bash in the folder you are looking at, and File Explorer and the terminal follow each other's current folder.
+Sill adds an integrated terminal to the bottom or the right side of File Explorer on Windows, like the terminal panel in KDE Dolphin. Open PowerShell, Command Prompt (cmd) or Git Bash in the folder you are looking at, and File Explorer and the terminal follow each other's current folder.
 
 ![Sill: a PowerShell terminal panel docked at the bottom of a Windows 11 File Explorer window, with two terminal tabs](assets/screenshot.png)
 
@@ -15,14 +15,14 @@ Sill extends File Explorer itself. It is not a replacement file manager. The pan
 
 ## Features
 
-- **Terminal inside File Explorer:** a panel at the bottom of every File Explorer window. `` Ctrl+` `` opens and closes it, like the terminal in VS Code.
+- **Terminal inside File Explorer:** a panel at the bottom of every File Explorer window. `` Ctrl+` `` opens and closes it, like the terminal in VS Code, and `` Ctrl+Alt+` `` moves it to the right side and back.
 - **Two-way folder sync:** File Explorer and the shell stay in the same folder. Sill types `cd` only while the shell waits at its prompt, which its shell integration marks, so it doesn't type into a running program such as Claude Code or `vim`.
 - **Terminal tabs:** several terminals per window, with VS Code keys (`` Ctrl+Shift+` ``, `Ctrl+PageUp`/`Ctrl+PageDown`).
 - **Tab tear-off:** drag a File Explorer tab out into its own window, or into another window, and its terminals keep running and move with it.
 - **Alerts:** when a terminal you aren't looking at rings the bell, for example when Claude Code or Codex finishes, its tab shows a dot, the taskbar button flashes, and a closed panel opens (you can turn that off). For Claude Code and other AI coding agents, check **Receive alerts from AI coding agents** when you install Sill. Codex alerts without it.
 - **Your shell:** PowerShell 7, Windows PowerShell, cmd, Git Bash, or any command line.
 - **"Open in Sill"** on the right-click menu of a folder background.
-- **Light and dark themes** that follow Windows.
+- **Light and dark themes** that follow Windows, or your Windows Terminal profile if you turn that on.
 - **No administrator rights:** per-user install and uninstall, registered under HKCU only.
 
 ## Requirements
@@ -38,7 +38,7 @@ Sill has only been tested on Windows 11 26H2 (build 26300). Windows 10 should wo
 2. The installer is not code-signed, so SmartScreen may show "Windows protected your PC". Click **More info**, then **Run anyway**.
 3. Open a new File Explorer window and press `` Ctrl+` ``.
 
-**Update:** run the setup of the newer version. If File Explorer had the panel loaded, restart File Explorer or sign out to use the new version. Your settings and panel height are kept.
+**Update:** run the setup of the newer version. If File Explorer had the panel loaded, restart File Explorer or sign out to use the new version. Your settings and the panel's height and position are kept.
 
 **Uninstall:** in Settings > Apps, find Sill and choose Uninstall. This also deletes `%LOCALAPPDATA%\Sill` (logs, settings, WebView2 data). Files that are still in use are deleted at your next sign-in.
 
@@ -50,6 +50,7 @@ Sill has only been tested on Windows 11 26H2 (build 26300). Windows 10 should wo
 |---|---|
 | `` Ctrl+` `` | Open the panel, focus it, or close it (in a File Explorer window) |
 | `` Ctrl+Shift+` `` | New terminal |
+| `` Ctrl+Alt+` `` | Move the panel to the right side or back to the bottom |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Previous / next terminal (wraps around) |
 | `Ctrl+,` | Open `settings.json` in Notepad |
 | `Ctrl+Up` / `Ctrl+Down` | Scroll to the previous / next command |
@@ -60,7 +61,7 @@ Sill has only been tested on Windows 11 26H2 (build 26300). Windows 10 should wo
 | `Ctrl+V` | Paste |
 | `Ctrl+click` | Open a link in your default browser (http and https only) |
 
-Sill handles these keys itself and doesn't send them to the shell (except `^C`). `` Ctrl+` `` and `` Ctrl+Shift+` `` work while a File Explorer window is in the foreground.
+Sill handles these keys itself and doesn't send them to the shell (except `^C`). `` Ctrl+` ``, `` Ctrl+Shift+` `` and `` Ctrl+Alt+` `` work while a File Explorer window is in the foreground.
 
 ### Terminal tabs
 
@@ -69,6 +70,12 @@ Sill handles these keys itself and doesn't send them to the shell (except `^C`).
 - `exit` closes the tab. If the shell ends with a non-zero exit code, the tab stays open and shows the code. Press any key to restart it.
 - The tab title is the title the running program sets, or the shell name.
 - Drag a File Explorer tab out into a new window, back again, or into another window's tab bar: the panel moves with it, with the same shells and their output. Closing a File Explorer tab or window ends its terminals.
+
+### Panel position
+
+![The Sill panel docked on the right side of a File Explorer window, next to the file list](assets/screenshot-right.png)
+
+Press `` Ctrl+Alt+` `` or the dock button in the tab strip to move the panel between the bottom and the right of the window. A closed panel opens on the other side. The terminals keep running. Drag the left edge of the right panel to change its width. Panels you open later use the last position; panels that are already open stay where they are.
 
 ### Alerts
 
@@ -131,11 +138,17 @@ Right-click an empty area of a folder and choose **Open in Sill**. On Windows 11
 
 `"alertOpensPanel": false` keeps a closed panel closed when a terminal alerts you (see [Alerts](#alerts)). The default is `true`.
 
-A change applies to the next terminal you open.
+`"windowsTerminalProfile": true` makes the panel look like your Windows Terminal default profile (see [Appearance](#appearance)). The default is `false`.
+
+A change applies to the next terminal you open. `windowsTerminalProfile` applies to open panels within two seconds.
 
 ### Appearance
 
 The panel follows the Windows app mode (light or dark) under Settings > Personalization > Colors.
+
+With `"windowsTerminalProfile": true` in settings.json, it follows your Windows Terminal default profile instead: color scheme (built-in or your own), the profile's color overrides, font, cursor shape, padding, and a local background image (PNG, JPEG, GIF, WebP or BMP up to 8 MB). Changes to Windows Terminal's settings show up within two seconds. Sill only reads Windows Terminal's settings. Acrylic and transparency are not supported.
+
+![The Sill panel with the Campbell color scheme and the font size from a Windows Terminal default profile](assets/screenshot-wt.png)
 
 ## Troubleshooting
 
@@ -167,6 +180,7 @@ You don't need the .NET SDK. The build uses the C# compiler that comes with Wind
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build.ps1             # bin\ (runs the unit tests first; closes File Explorer folder windows that hold the DLL)
+powershell -ExecutionPolicy Bypass -File .\build.ps1 -Isolated   # same, but leaves File Explorer and Sill running (they keep the old files until restarted)
 powershell -ExecutionPolicy Bypass -File .\tools\register.ps1    # register bin\ for the current user
 powershell -ExecutionPolicy Bypass -File .\tools\host-check.ps1  # sill-host test without File Explorer
 powershell -ExecutionPolicy Bypass -File .\tools\tearoff-check.ps1  # drags a File Explorer tab with the mouse (hands off while it runs)
